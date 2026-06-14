@@ -18,11 +18,11 @@ anyio==4.4.0
     # via starlette
     # via watchfiles
 apscheduler==3.10.4
-    # via bilicast
+    # via anycast
 beautifulsoup4==4.12.3
     # via bs4
 bilix==0.18.8
-    # via bilicast
+    # via anycast
 browser-cookie3==0.19.1
     # via bilix
 bs4==0.0.2
@@ -43,11 +43,11 @@ dnspython==2.6.1
 email-validator==2.2.0
     # via fastapi
 fastapi==0.111.0
-    # via bilicast
+    # via anycast
 fastapi-cli==0.0.4
     # via fastapi
 feedgen==1.0.0
-    # via bilicast
+    # via anycast
 h11==0.14.0
     # via httpcore
     # via uvicorn
@@ -111,7 +111,7 @@ python-multipart==0.0.9
 pytz==2024.1
     # via apscheduler
 pyyaml==6.0.1
-    # via bilicast
+    # via anycast
     # via uvicorn
 rich==13.7.1
     # via bilix
@@ -140,7 +140,7 @@ tzlocal==5.2
 ujson==5.10.0
     # via fastapi
 uvicorn==0.30.1
-    # via bilicast
+    # via anycast
     # via fastapi
 uvloop==0.19.0
     # via uvicorn

@@ -1,12 +1,12 @@
 podcasts:
-  - name: bilicast1
+  - name: anycast1
     url: https://space.bilibili.com/1780480185/lists/6235752?type=season
     update_period_cron: '*/1 * * * *'
     keep_latest: 10
     sort_by: date
     sort_order: desc
 
-  - name: bilicast2
+  - name: anycast2
     url: https://space.bilibili.com/1780480185/lists/2661850?type=season
     update_period_cron: '*/2 * * * *'
     keep_latest: 20

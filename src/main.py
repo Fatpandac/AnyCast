@@ -32,8 +32,7 @@ async def lifespan(_app: FastAPI):
     request_stop_reset()
     config = get_config()
     download_tasks = [
-        asyncio.create_task(run_downloader(podcast))
-        for podcast in config["podcasts"]
+        asyncio.create_task(run_downloader(podcast)) for podcast in config["podcasts"]
     ]
     start_cron_jobs()
     yield
@@ -45,6 +44,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
+    title="AnyCast",
     debug=os.getenv("DEBUG", "").lower() in ("1", "true", "yes"),
     lifespan=lifespan,
 )
@@ -81,7 +81,7 @@ def _build_rss(
     name: str,
     request: Request,
 ) -> bytes:
-    _BRANDING = "由 bilicast 生成 · https://github.com/Fatpandac/bilicast"
+    _BRANDING = "由 AnyCast 生成 · https://github.com/Fatpandac/AnyCast"
     fg = FeedGenerator()
     fg.load_extension("podcast")
     fg.id(channel_rss_url)
@@ -93,7 +93,9 @@ def _build_rss(
 
     for ep in episodes:
         encoded_name = quote(ep["file_name"])
-        ep_url = str(request.url_for("podcast_media", name=name, file_name=encoded_name))
+        ep_url = str(
+            request.url_for("podcast_media", name=name, file_name=encoded_name)
+        )
         media_type, _ = mimetypes.guess_type(ep["file_name"])
         media_file = Path("downloads") / name / ep["file_name"]
         file_size = media_file.stat().st_size if media_file.exists() else 0
@@ -129,7 +131,9 @@ async def podcasts():
 @app.get("/podcasts/{name}", name="podcast_info")
 async def podcasts_with_name(name: str, request: Request):
     if podcast_exists(name):
-        config = list(filter(lambda it: it["name"] == name, _get_podcasts_from_file()))[0]
+        config = list(filter(lambda it: it["name"] == name, _get_podcasts_from_file()))[
+            0
+        ]
         return {
             "name": name,
             "rss": str(request.url_for("podcast_rss", name=name)),
@@ -159,7 +163,7 @@ async def podcast_rss(name: str, request: Request):
     channel_title: str = podcast_row.get("channel_title") or config["name"]
     channel_description: str = (
         podcast_row.get("channel_description")
-        or "由 bilicast 生成 · https://github.com/Fatpandac/bilicast"
+        or "由 AnyCast 生成 · https://github.com/Fatpandac/AnyCast"
     )
     channel_image: str | None = podcast_row.get("channel_image") or None
 
@@ -188,7 +192,9 @@ async def podcast_rss(name: str, request: Request):
 def main():
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="debug", timeout_graceful_shutdown=2)
+    uvicorn.run(
+        app, host="0.0.0.0", port=8000, log_level="debug", timeout_graceful_shutdown=2
+    )
 
 
 if __name__ == "__main__":

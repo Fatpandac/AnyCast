@@ -1,5 +1,5 @@
 [project]
-name = "bilicast"
+name = "anycast"
 version = "0.1.0"
 description = "Add your description here"
 authors = [
@@ -21,7 +21,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project.scripts]
-bilicast = "src.main:main"
+anycast = "src.main:main"
 
 [dependency-groups]
 dev = [

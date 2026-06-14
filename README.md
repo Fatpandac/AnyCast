@@ -1,4 +1,4 @@
-# bilicast
+# AnyCast
 A generator for creating Bilibili podcasts.
 
 ## 已实现功能
@@ -15,7 +15,7 @@ A generator for creating Bilibili podcasts.
 - `GET /media/{name}/{file_name}`：获取生成后的音频文件
 
 例如 RSS 订阅：
-`https://<host>:<port>/rss/bilicast1`
+`https://<host>:<port>/rss/anycast1`
 
 ## Neovim + Pyright
 
@@ -26,7 +26,7 @@ uv sync --group dev
 uv run pyright src
 ```
 
-项目已新增 `pyrightconfig.json`，会把解释器定位到本仓库 `.venv` 并把 `src` 作为源码搜索路径。修改完依赖或配置后，重启 Neovim 的 Pyright LSP 即可刷新。 
+项目已新增 `pyrightconfig.json`，会把解释器定位到本仓库 `.venv` 并把 `src` 作为源码搜索路径。修改完依赖或配置后，重启 Neovim 的 Pyright LSP 即可刷新。
 
 ## 类型检查 Hook
 
