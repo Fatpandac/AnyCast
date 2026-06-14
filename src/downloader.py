@@ -13,19 +13,45 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from bilix.sites.bilibili import api
 from bilix.sites.bilibili.downloader import DownloaderBilibili
+from yt_dlp import YoutubeDL
 
 from src.config import Podcast
-from src.database import cleanup_old_episodes, get_podcast_by_episode, get_podcast, save_episode, update_podcast_metadata
+from src.database import (
+    cleanup_old_episodes,
+    get_podcast_by_episode,
+    get_podcast,
+    save_episode,
+    update_podcast_metadata,
+)
 
 log = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("bilix").setLevel(logging.WARNING)
+logging.getLogger("yt_dlp").setLevel(logging.WARNING)
 
 _cancel_downloads = threading.Event()
 
 DOWNLOADS_DIR = Path("downloads")
-AUDIO_EXTENSIONS = {".m4a", ".mp3", ".flac", ".wav", ".aac", ".ogg", ".opus", ".mp4"}
+AUDIO_EXTENSIONS = {
+    ".m4a",
+    ".mp3",
+    ".flac",
+    ".wav",
+    ".aac",
+    ".ogg",
+    ".opus",
+    ".mp4",
+    ".webm",
+}
+
+YOUTUBE_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+}
 
 
 def __audio_files_in(dirpath: Path) -> set[Path]:
@@ -42,6 +68,95 @@ def _pubtime_to_iso(ts: int | None) -> str | None:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
 
 
+def _is_youtube_url(url: str) -> bool:
+    hostname = urlparse(url).hostname or ""
+    return hostname.lower() in YOUTUBE_HOSTS
+
+
+def _youtube_thumbnail(info: dict) -> str:
+    thumbnail = info.get("thumbnail")
+    if thumbnail:
+        return str(thumbnail)
+    thumbnails = info.get("thumbnails") or []
+    if thumbnails:
+        return str((thumbnails[-1] or {}).get("url") or "")
+    return ""
+
+
+def _youtube_published_at(info: dict) -> str | None:
+    timestamp = info.get("timestamp") or info.get("release_timestamp")
+    if timestamp:
+        return datetime.fromtimestamp(int(timestamp), tz=timezone.utc).isoformat()
+
+    upload_date = info.get("upload_date")
+    if isinstance(upload_date, str) and len(upload_date) == 8:
+        try:
+            return (
+                datetime.strptime(upload_date, "%Y%m%d")
+                .replace(tzinfo=timezone.utc)
+                .isoformat()
+            )
+        except ValueError:
+            return None
+    return None
+
+
+def _youtube_source_url(info: dict) -> str:
+    url = info.get("webpage_url") or info.get("original_url") or info.get("url")
+    if isinstance(url, str) and url.startswith("http"):
+        return url
+    episode_id = info.get("id")
+    if episode_id:
+        return f"https://www.youtube.com/watch?v={episode_id}"
+    return str(url or "")
+
+
+def _extract_youtube_info(url: str, download: bool, options: dict) -> dict:
+    with YoutubeDL(options) as ydl:
+        return ydl.extract_info(url, download=download) or {}
+
+
+async def _collect_youtube_episodes(podcast: Podcast) -> list[dict]:
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "ignoreerrors": True,
+        "skip_download": True,
+    }
+    info = await asyncio.to_thread(
+        _extract_youtube_info, podcast["url"], False, options
+    )
+    entries = [entry for entry in (info.get("entries") or [info]) if entry]
+
+    if info.get("title") or info.get("description") or _youtube_thumbnail(info):
+        update_podcast_metadata(
+            podcast["name"],
+            info.get("title") or None,
+            info.get("description") or None,
+            _youtube_thumbnail(info) or None,
+        )
+
+    episodes = [
+        {
+            "episode_id": str(entry.get("id") or _youtube_source_url(entry)),
+            "title": str(entry.get("title") or entry.get("id") or "Untitled"),
+            "description": str(entry.get("description") or ""),
+            "source_url": _youtube_source_url(entry),
+            "cover_image_url": _youtube_thumbnail(entry),
+            "published_at": _youtube_published_at(entry),
+        }
+        for entry in entries
+    ]
+
+    desc = podcast["sort_order"] == "desc"
+    if podcast["sort_by"] == "title":
+        episodes.sort(key=lambda item: item["title"], reverse=desc)
+    else:
+        episodes.sort(key=lambda item: item.get("published_at") or "", reverse=desc)
+
+    return episodes
+
+
 async def __fetch_video_detail(client: httpx.AsyncClient, bvid: str) -> dict:
     """从 /x/web-interface/view 获取单集的 desc 和 pic。"""
     try:
@@ -56,7 +171,9 @@ async def __fetch_video_detail(client: httpx.AsyncClient, bvid: str) -> dict:
         return {"desc": "", "pic": ""}
 
 
-async def __collect_season_episodes(client: httpx.AsyncClient, sid: str) -> tuple[list[dict], dict]:
+async def __collect_season_episodes(
+    client: httpx.AsyncClient, sid: str
+) -> tuple[list[dict], dict]:
     res = await client.get(
         "https://api.bilibili.com/x/space/fav/season/list",
         params={"season_id": sid},
@@ -72,7 +189,9 @@ async def __collect_season_episodes(client: httpx.AsyncClient, sid: str) -> tupl
         "image": info.get("cover") or info.get("cover_url") or "",
     }
 
-    details = await asyncio.gather(*[__fetch_video_detail(client, m["bvid"]) for m in medias])
+    details = await asyncio.gather(
+        *[__fetch_video_detail(client, m["bvid"]) for m in medias]
+    )
     episodes = [
         {
             "episode_id": m["bvid"],
@@ -87,8 +206,12 @@ async def __collect_season_episodes(client: httpx.AsyncClient, sid: str) -> tupl
     return episodes, channel_meta
 
 
-async def __collect_series_episodes(client: httpx.AsyncClient, sid: str) -> tuple[list[dict], dict]:
-    meta_res = await client.get(f"https://api.bilibili.com/x/series/series?series_id={sid}")
+async def __collect_series_episodes(
+    client: httpx.AsyncClient, sid: str
+) -> tuple[list[dict], dict]:
+    meta_res = await client.get(
+        f"https://api.bilibili.com/x/series/series?series_id={sid}"
+    )
     meta = meta_res.json()["data"]["meta"]
     mid, total = meta["mid"], meta["total"]
 
@@ -104,7 +227,9 @@ async def __collect_series_episodes(client: httpx.AsyncClient, sid: str) -> tupl
     )
     archives = res.json()["data"]["archives"]
 
-    details = await asyncio.gather(*[__fetch_video_detail(client, a["bvid"]) for a in archives])
+    details = await asyncio.gather(
+        *[__fetch_video_detail(client, a["bvid"]) for a in archives]
+    )
     episodes = [
         {
             "episode_id": a["bvid"],
@@ -120,6 +245,9 @@ async def __collect_series_episodes(client: httpx.AsyncClient, sid: str) -> tupl
 
 
 async def __collect_episodes(podcast: Podcast) -> list[dict]:
+    if _is_youtube_url(podcast["url"]):
+        return await _collect_youtube_episodes(podcast)
+
     url = podcast["url"]
 
     sid = None
@@ -138,10 +266,14 @@ async def __collect_episodes(podcast: Podcast) -> list[dict]:
     async with httpx.AsyncClient(**api.dft_client_settings) as client:
         if sid or "collection" in url:
             try:
-                episodes, channel_meta = await __collect_season_episodes(client, sid or url)
+                episodes, channel_meta = await __collect_season_episodes(
+                    client, sid or url
+                )
             except Exception:
                 if sid:
-                    episodes, channel_meta = await __collect_series_episodes(client, sid)
+                    episodes, channel_meta = await __collect_series_episodes(
+                        client, sid
+                    )
                 else:
                     raise ValueError(f"Unsupported bilibili URL: {url}")
         elif "series" in url:
@@ -152,7 +284,11 @@ async def __collect_episodes(podcast: Podcast) -> list[dict]:
         else:
             raise ValueError(f"Unsupported bilibili URL: {url}")
 
-    if channel_meta.get("title") or channel_meta.get("description") or channel_meta.get("image"):
+    if (
+        channel_meta.get("title")
+        or channel_meta.get("description")
+        or channel_meta.get("image")
+    ):
         update_podcast_metadata(
             podcast["name"],
             channel_meta.get("title") or None,
@@ -195,6 +331,49 @@ async def __download_episode(episode: dict[str, str], target_dir: Path) -> str |
         return await __download_one(downloader, episode, target_dir)
 
 
+def _run_youtube_download(url: str, target_dir: Path) -> None:
+    options = {
+        "format": "bestaudio/best",
+        "paths": {"home": str(target_dir)},
+        "outtmpl": {"default": "%(title).200B [%(id)s].%(ext)s"},
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "m4a",
+            }
+        ],
+    }
+    _extract_youtube_info(url, True, options)
+
+
+async def _download_youtube_episode(
+    episode: dict[str, str], target_dir: Path
+) -> str | None:
+    before_files = __audio_files_in(target_dir)
+    await asyncio.to_thread(_run_youtube_download, episode["source_url"], target_dir)
+    after_files = __audio_files_in(target_dir)
+    downloaded = after_files - before_files
+    if not downloaded:
+        return None
+
+    newest_file = max(downloaded, key=lambda f: f.stat().st_mtime)
+    return newest_file.name
+
+
+async def _download_episode_for_podcast(
+    podcast: Podcast,
+    episode: dict[str, str],
+    target_dir: Path,
+) -> str | None:
+    if _is_youtube_url(podcast["url"]):
+        return await _download_youtube_episode(episode, target_dir)
+
+    return await __download_episode(episode, target_dir)
+
+
 async def _wait_for_cancel() -> None:
     """Async-friendly cancel signal: polls threading.Event at 0.2 s intervals."""
     while not _cancel_downloads.is_set():
@@ -218,7 +397,9 @@ async def __run(podcast: Podcast):
 
     episodes = await __collect_episodes(podcast)
     pending_episodes = [
-        episode for episode in episodes if not get_podcast_by_episode(podcast_name, episode["episode_id"])
+        episode
+        for episode in episodes
+        if not get_podcast_by_episode(podcast_name, episode["episode_id"])
     ]
     total_to_download = len(pending_episodes)
     log.info(f"{podcast_name}: 需要下载 {total_to_download} 条")
@@ -227,9 +408,13 @@ async def __run(podcast: Podcast):
         if _cancel_downloads.is_set():
             log.warning(f"{podcast_name}: 已收到退出信号，停止剩余下载")
             return
-        log.info(f"{podcast_name}: 当前下载第 {index} / {total_to_download} 条（{episode['episode_id']}）")
+        log.info(
+            f"{podcast_name}: 当前下载第 {index} / {total_to_download} 条（{episode['episode_id']}）"
+        )
 
-        dl_task = asyncio.create_task(__download_episode(episode, target_dir))
+        dl_task = asyncio.create_task(
+            _download_episode_for_podcast(podcast, episode, target_dir)
+        )
         cancel_task = asyncio.create_task(_wait_for_cancel())
         try:
             done, _ = await asyncio.wait(
