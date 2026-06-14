@@ -1,9 +1,9 @@
 # AnyCast
-A generator for creating Bilibili podcasts.
+A generator for creating podcasts from Bilibili and YouTube playlists.
 
 ## 已实现功能
 
-- 从 `config.yaml` 里的 `podcasts` 列表拉取视频
+- 从 `config.yaml` 里的 `podcasts` 列表拉取 Bilibili 或 YouTube 视频
 - 仅下载音频（`only_audio`）并落库
 - 自动生成 RSS（以播客 `name` 作为路径）
 

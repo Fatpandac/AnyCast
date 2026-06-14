@@ -12,3 +12,10 @@ podcasts:
     keep_latest: 20
     sort_by: date
     sort_order: asc
+
+  - name: youtube1
+    url: https://www.youtube.com/playlist?list=PLxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    update_period_cron: '0 * * * *'
+    keep_latest: 10
+    sort_by: date
+    sort_order: desc
