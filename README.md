@@ -41,6 +41,14 @@ pre-commit install
 
 ## 运行
 
+YouTube 音频提取依赖 `ffmpeg`。macOS 可通过 Homebrew 安装：
+
+```bash
+brew install ffmpeg
+```
+
+Linux 或其他系统请使用对应包管理器安装 `ffmpeg`，并确保 `ffmpeg` 在 `PATH` 中。
+
 ```bash
 uv sync --group dev
 uv run src/main.py

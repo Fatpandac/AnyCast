@@ -128,3 +128,32 @@ def test_youtube_episode_downloads_audio(monkeypatch, tmp_path):
     )
 
     assert file_name == "downloaded-audio.m4a"
+
+
+def test_youtube_episode_requires_ffmpeg(monkeypatch, tmp_path):
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            raise AssertionError("yt-dlp should not run without ffmpeg")
+
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(downloader, "YoutubeDL", FakeYoutubeDL, raising=False)
+
+    try:
+        asyncio.run(
+            downloader._download_youtube_episode(
+                {
+                    "episode_id": "abc123",
+                    "source_url": "https://www.youtube.com/watch?v=abc123",
+                },
+                tmp_path,
+            )
+        )
+    except RuntimeError as exc:
+        assert "ffmpeg" in str(exc)
+        assert "YouTube" in str(exc)
+        assert "brew install ffmpeg" in str(exc)
+    else:
+        raise AssertionError("Expected missing ffmpeg to raise RuntimeError")

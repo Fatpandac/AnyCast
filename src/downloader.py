@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import errno
 import logging
+import shutil
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -114,6 +115,16 @@ def _youtube_source_url(info: dict) -> str:
 def _extract_youtube_info(url: str, download: bool, options: dict) -> dict:
     with YoutubeDL(options) as ydl:
         return ydl.extract_info(url, download=download) or {}
+
+
+def _ensure_ffmpeg_available() -> None:
+    if shutil.which("ffmpeg"):
+        return
+
+    raise RuntimeError(
+        "YouTube 音频提取需要先安装 ffmpeg。macOS 可运行 `brew install ffmpeg`；"
+        "其他系统请使用对应包管理器安装 ffmpeg，并确保 ffmpeg 在 PATH 中。"
+    )
 
 
 async def _collect_youtube_episodes(podcast: Podcast) -> list[dict]:
@@ -352,6 +363,7 @@ def _run_youtube_download(url: str, target_dir: Path) -> None:
 async def _download_youtube_episode(
     episode: dict[str, str], target_dir: Path
 ) -> str | None:
+    _ensure_ffmpeg_available()
     before_files = __audio_files_in(target_dir)
     await asyncio.to_thread(_run_youtube_download, episode["source_url"], target_dir)
     after_files = __audio_files_in(target_dir)
