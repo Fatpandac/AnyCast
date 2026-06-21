@@ -14,8 +14,14 @@ class Podcast(TypedDict):
     sort_order: Literal["asc", "desc"]
 
 
+class ServerConfig(TypedDict, total=False):
+    host: str
+    port: int
+
+
 class Config(TypedDict):
     podcasts: list[Podcast]
+    server: ServerConfig
 
 
 log = logging.getLogger(__name__)

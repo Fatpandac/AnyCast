@@ -192,8 +192,12 @@ async def podcast_rss(name: str, request: Request):
 def main():
     import uvicorn
 
+    config = get_config()
+    server = config.get("server", {})
+    host = server.get("host", "0.0.0.0")
+    port = server.get("port", 8000)
     uvicorn.run(
-        app, host="0.0.0.0", port=8000, log_level="debug", timeout_graceful_shutdown=2
+        app, host=host, port=port, log_level="debug", timeout_graceful_shutdown=2
     )
 
 

@@ -1,3 +1,7 @@
+server:
+  host: 0.0.0.0
+  port: 8000
+
 podcasts:
   - name: anycast1
     url: https://space.bilibili.com/1780480185/lists/6235752?type=season
