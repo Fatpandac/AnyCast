@@ -19,9 +19,15 @@ class ServerConfig(TypedDict, total=False):
     port: int
 
 
+class YouTubeConfig(TypedDict, total=False):
+    cookies_file: str
+    cookies_from_browser: str
+
+
 class Config(TypedDict):
     podcasts: list[Podcast]
     server: ServerConfig
+    youtube: YouTubeConfig
 
 
 log = logging.getLogger(__name__)

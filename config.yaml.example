@@ -2,6 +2,11 @@ server:
   host: 0.0.0.0
   port: 8000
 
+# YouTube cookies 配置（二选一），用于绕过 bot 检测
+# youtube:
+#   cookies_file: /path/to/cookies.txt   # 从文件读取 cookies
+#   cookies_from_browser: chrome         # 从浏览器读取（chrome/firefox/safari 等）
+
 podcasts:
   - name: anycast1
     url: https://space.bilibili.com/1780480185/lists/6235752?type=season
