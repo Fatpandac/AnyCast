@@ -16,7 +16,7 @@ from bilix.sites.bilibili import api
 from bilix.sites.bilibili.downloader import DownloaderBilibili
 from yt_dlp import YoutubeDL
 
-from src.config import Podcast
+from src.config import Podcast, get_config
 from src.database import (
     cleanup_old_episodes,
     get_podcast_by_episode,
@@ -112,19 +112,20 @@ def _youtube_source_url(info: dict) -> str:
     return str(url or "")
 
 
+def _youtube_base_options() -> dict:
+    yt_config = get_config().get("youtube", {})
+    opts: dict = {"js_runtimes": {"node": {}}}
+    if cookies_file := yt_config.get("cookies_file"):
+        opts["cookiefile"] = cookies_file
+    elif browser := yt_config.get("cookies_from_browser"):
+        opts["cookiesfrombrowser"] = (browser, None, None, None)
+    return opts
+
+
 def _extract_youtube_info(url: str, download: bool, options: dict) -> dict:
     with YoutubeDL(options) as ydl:
         return ydl.extract_info(url, download=download) or {}
 
-
-def _ensure_ffmpeg_available() -> None:
-    if shutil.which("ffmpeg"):
-        return
-
-    raise RuntimeError(
-        "YouTube 音频提取需要先安装 ffmpeg。macOS 可运行 `brew install ffmpeg`；"
-        "其他系统请使用对应包管理器安装 ffmpeg，并确保 ffmpeg 在 PATH 中。"
-    )
 
 
 async def _collect_youtube_episodes(podcast: Podcast) -> list[dict]:
@@ -133,6 +134,7 @@ async def _collect_youtube_episodes(podcast: Podcast) -> list[dict]:
         "no_warnings": True,
         "ignoreerrors": True,
         "skip_download": True,
+        **_youtube_base_options(),
     }
     info = await asyncio.to_thread(
         _extract_youtube_info, podcast["url"], False, options
@@ -342,20 +344,54 @@ async def __download_episode(episode: dict[str, str], target_dir: Path) -> str |
         return await __download_one(downloader, episode, target_dir)
 
 
-def _run_youtube_download(url: str, target_dir: Path) -> None:
-    options = {
-        "format": "bestaudio/best",
-        "paths": {"home": str(target_dir)},
-        "outtmpl": {"default": "%(title).200B [%(id)s].%(ext)s"},
+def _has_audio_only_format(url: str) -> bool:
+    info = _extract_youtube_info(url, False, {
         "quiet": True,
         "no_warnings": True,
+        "skip_download": True,
+        **_youtube_base_options(),
+    })
+    return any(
+        f.get("vcodec") == "none" and f.get("acodec") not in (None, "none")
+        for f in (info.get("formats") or [])
+    )
+
+
+def _yt_progress_hook(d: dict) -> None:
+    status = d.get("status")
+    if status == "downloading":
+        filename = Path(d.get("filename", "")).name
+        downloaded = d.get("_downloaded_bytes_str", "?")
+        total = d.get("_total_bytes_str") or d.get("_total_bytes_estimate_str", "?")
+        speed = d.get("_speed_str", "?")
+        eta = d.get("_eta_str", "?")
+        log.info(f"下载中: {filename} {downloaded}/{total} 速度:{speed} 剩余:{eta}")
+    elif status == "finished":
+        log.info(f"下载完成: {Path(d.get('filename', '')).name}")
+
+
+def _run_youtube_download(url: str, target_dir: Path) -> None:
+    if _has_audio_only_format(url):
+        fmt = "bestaudio"
+        postprocessors = []
+    else:
+        if not shutil.which("ffmpeg"):
+            raise RuntimeError(
+                "该视频没有独立音频流，需要 ffmpeg 从视频中提取音频。"
+                "请先安装 ffmpeg 并确保它在 PATH 中。"
+            )
+        fmt = "bestvideo+bestaudio/best"
+        postprocessors = [{"key": "FFmpegExtractAudio", "preferredcodec": "m4a"}]
+
+    options = {
+        "format": fmt,
+        "paths": {"home": str(target_dir)},
+        "outtmpl": {"default": "%(title).200B [%(id)s].%(ext)s"},
+        "no_warnings": True,
         "noplaylist": True,
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "m4a",
-            }
-        ],
+        "postprocessors": postprocessors,
+        "progress_hooks": [_yt_progress_hook],
+        **_youtube_base_options(),
     }
     _extract_youtube_info(url, True, options)
 
@@ -363,7 +399,6 @@ def _run_youtube_download(url: str, target_dir: Path) -> None:
 async def _download_youtube_episode(
     episode: dict[str, str], target_dir: Path
 ) -> str | None:
-    _ensure_ffmpeg_available()
     before_files = __audio_files_in(target_dir)
     await asyncio.to_thread(_run_youtube_download, episode["source_url"], target_dir)
     after_files = __audio_files_in(target_dir)
@@ -407,7 +442,7 @@ async def __run(podcast: Podcast):
                     candidate.unlink(missing_ok=True)
             log.info(f"{podcast_name}: 下载前清理旧集 {len(removed)} 条以释放空间")
 
-    episodes = await __collect_episodes(podcast)
+    episodes = (await __collect_episodes(podcast))[: podcast["keep_latest"]]
     pending_episodes = [
         episode
         for episode in episodes
