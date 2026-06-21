@@ -90,6 +90,7 @@ def _build_rss(
     fg.description(channel_description)
     if channel_image:
         fg.podcast.itunes_image(channel_image)  # type: ignore[attr-defined]
+        fg.image(url=channel_image, title=channel_title, link=channel_link)
 
     for ep in episodes:
         encoded_name = quote(ep["file_name"])
@@ -170,8 +171,8 @@ async def podcast_rss(name: str, request: Request):
     episodes = get_episodes(
         name,
         limit=config["keep_latest"],
-        sort_by=config["sort_by"],
-        sort_order=config["sort_order"],
+        sort_by="date",
+        sort_order="desc",
     )
     if not channel_image and episodes:
         channel_image = episodes[0].get("cover_image_url")

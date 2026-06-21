@@ -74,13 +74,25 @@ def _is_youtube_url(url: str) -> bool:
     return hostname.lower() in YOUTUBE_HOSTS
 
 
+def _clean_thumbnail_url(url: str) -> str:
+    """Strip YouTube signing query params that expire."""
+    parsed = urlparse(url)
+    return parsed._replace(query="").geturl() if parsed.query else url
+
+
 def _youtube_thumbnail(info: dict) -> str:
+    # Prefer clean per-video thumbnails over signed playlist thumbnails
+    thumbnails: list[dict] = info.get("thumbnails") or []
+    clean = [t for t in thumbnails if t.get("url") and "?" not in t["url"]]
+    if clean:
+        best = max(clean, key=lambda t: (t.get("width") or 0) * (t.get("height") or 0))
+        return str(best["url"])
     thumbnail = info.get("thumbnail")
     if thumbnail:
-        return str(thumbnail)
-    thumbnails = info.get("thumbnails") or []
+        return _clean_thumbnail_url(str(thumbnail))
     if thumbnails:
-        return str((thumbnails[-1] or {}).get("url") or "")
+        raw = str((thumbnails[-1] or {}).get("url") or "")
+        return _clean_thumbnail_url(raw) if raw else ""
     return ""
 
 
@@ -344,19 +356,6 @@ async def __download_episode(episode: dict[str, str], target_dir: Path) -> str |
         return await __download_one(downloader, episode, target_dir)
 
 
-def _has_audio_only_format(url: str) -> bool:
-    info = _extract_youtube_info(url, False, {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        **_youtube_base_options(),
-    })
-    return any(
-        f.get("vcodec") == "none" and f.get("acodec") not in (None, "none")
-        for f in (info.get("formats") or [])
-    )
-
-
 def _yt_progress_hook(d: dict) -> None:
     status = d.get("status")
     if status == "downloading":
@@ -371,25 +370,18 @@ def _yt_progress_hook(d: dict) -> None:
 
 
 def _run_youtube_download(url: str, target_dir: Path) -> None:
-    if _has_audio_only_format(url):
-        fmt = "bestaudio"
-        postprocessors = []
-    else:
-        if not shutil.which("ffmpeg"):
-            raise RuntimeError(
-                "该视频没有独立音频流，需要 ffmpeg 从视频中提取音频。"
-                "请先安装 ffmpeg 并确保它在 PATH 中。"
-            )
-        fmt = "bestvideo+bestaudio/best"
-        postprocessors = [{"key": "FFmpegExtractAudio", "preferredcodec": "m4a"}]
-
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError(
+            "需要 ffmpeg 将音频转换为 m4a 格式。"
+            "请先安装 ffmpeg 并确保它在 PATH 中。"
+        )
     options = {
-        "format": fmt,
+        "format": "bestaudio[ext=m4a]/bestaudio/bestvideo+bestaudio/best",
         "paths": {"home": str(target_dir)},
         "outtmpl": {"default": "%(title).200B [%(id)s].%(ext)s"},
         "no_warnings": True,
         "noplaylist": True,
-        "postprocessors": postprocessors,
+        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "m4a"}],
         "progress_hooks": [_yt_progress_hook],
         **_youtube_base_options(),
     }
