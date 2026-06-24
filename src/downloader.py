@@ -146,6 +146,7 @@ async def _collect_youtube_episodes(podcast: Podcast) -> list[dict]:
         "no_warnings": True,
         "ignoreerrors": True,
         "skip_download": True,
+        "extractor_args": {"youtubetab": {"skip": ["authcheck"]}},
         **_youtube_base_options(),
     }
     info = await asyncio.to_thread(
