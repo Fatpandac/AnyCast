@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { App } from "./App"
-import { describeSchedule } from "./schedule"
+import { describeSchedule, parseScheduleCron } from "./schedule"
 
 const podcast = {
   name: "weekly",
@@ -63,7 +63,7 @@ describe("AnyCast admin", () => {
     expect(window.location.pathname).toBe("/admin/podcasts/weekly")
   })
 
-  it("edits a podcast from its list item", async () => {
+  it("reuses the add form when editing a podcast", async () => {
     const updated = { ...podcast, url: "https://www.youtube.com/playlist?list=UPDATED" }
     const fetch = vi.fn()
       .mockImplementationOnce(() => jsonResponse({ podcasts: [podcast], uses_default_password: false }))
@@ -74,6 +74,10 @@ describe("AnyCast admin", () => {
     render(<App />)
     fireEvent.click(await screen.findByRole("button", { name: "编辑 weekly" }))
     const dialog = screen.getByRole("dialog", { name: "编辑 weekly" })
+    expect(within(dialog).getByLabelText("名称")).toHaveValue("weekly")
+    expect(within(dialog).getByLabelText("名称")).toHaveAttribute("readonly")
+    expect(within(dialog).getByRole("button", { name: "更新频率：每小时整点" })).toBeInTheDocument()
+    expect(within(dialog).queryByLabelText("更新计划（Cron）")).not.toBeInTheDocument()
     fireEvent.change(within(dialog).getByLabelText("播放列表地址"), { target: { value: updated.url } })
     fireEvent.submit(within(dialog).getByRole("button", { name: "保存" }).closest("form")!)
 
@@ -132,6 +136,11 @@ describe("AnyCast admin", () => {
     expect(describeSchedule("0 10 15 * *")).toBe("每月 15 日 10:00")
     expect(describeSchedule("0 9 * * 1-5")).toBe("自定义计划（请查看配置）")
     expect(describeSchedule("bad input")).toBe("自定义计划（请查看配置）")
+  })
+
+  it("loads supported cron schedules into the shared form", () => {
+    expect(parseScheduleCron("30 8 * * 5")).toEqual({ frequency: "weekly", time: "08:30", weekday: "5", monthDay: "1" })
+    expect(parseScheduleCron("0 9 * * 1-5")).toBeNull()
   })
 
   it("converts selected weekly time to cron when adding", async () => {

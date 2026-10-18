@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { describeSchedule, scheduleCron, type Frequency } from "@/schedule"
+import { describeSchedule, parseScheduleCron, scheduleCron, type Frequency } from "@/schedule"
 
 const selectClass = "h-9 w-full appearance-none rounded-md border border-input bg-transparent py-1 pl-3 pr-9 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 
@@ -28,6 +28,7 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
   const [scheduleTime, setScheduleTime] = useState("09:00")
   const [weekday, setWeekday] = useState("0")
   const [monthDay, setMonthDay] = useState("1")
+  const [customCron, setCustomCron] = useState<string | null>(null)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
 
@@ -48,16 +49,16 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
     void load()
   }, [load])
 
-  async function add(event: FormEvent<HTMLFormElement>) {
+  async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!validSchedule) return
     const form = event.currentTarget
     const values = new FormData(form)
     const keepLatest = String(values.get("keep_latest") || "")
     const podcast: PodcastInput = {
-      name: String(values.get("name") || "").trim(),
+      name: editingPodcast?.name || String(values.get("name") || "").trim(),
       url: String(values.get("url") || "").trim(),
-      update_period_cron: scheduleCron(frequency, scheduleTime, weekday, monthDay),
+      update_period_cron: customCron?.trim() || scheduleCron(frequency, scheduleTime, weekday, monthDay),
       keep_latest: keepLatest ? Number(keepLatest) : null,
       page_size: Number(values.get("page_size") || 20),
       sort_by: values.get("sort_by") as PodcastInput["sort_by"],
@@ -67,50 +68,44 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
     setSaving(true)
     setMessage("")
     try {
-      await createPodcast(podcast)
+      if (editingPodcast) await updatePodcast(editingPodcast.name, podcast)
+      else await createPodcast(podcast)
       form.reset()
-      setAddOpen(false)
-      setScheduleOpen(false)
-      setFrequency("hourly")
-      setScheduleTime("09:00")
-      setWeekday("0")
-      setMonthDay("1")
-      setMessage("播客已添加，定时任务已生效。")
+      closeForm()
+      setMessage(editingPodcast ? "播客配置已更新，定时任务已生效。" : "播客已添加，定时任务已生效。")
       await load()
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "添加失败")
+      setError(reason instanceof Error ? reason.message : editingPodcast ? "更新失败" : "添加失败")
     } finally {
       setSaving(false)
     }
   }
 
-  async function edit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!editingPodcast) return
-    const values = new FormData(event.currentTarget)
-    const keepLatest = String(values.get("keep_latest") || "")
-    const podcast: PodcastInput = {
-      name: editingPodcast.name,
-      url: String(values.get("url") || "").trim(),
-      update_period_cron: String(values.get("update_period_cron") || "").trim(),
-      keep_latest: keepLatest ? Number(keepLatest) : null,
-      page_size: Number(values.get("page_size") || 20),
-      sort_by: values.get("sort_by") as PodcastInput["sort_by"],
-      sort_order: values.get("sort_order") as PodcastInput["sort_order"],
-    }
+  function closeForm() {
+    setAddOpen(false)
+    setEditingPodcast(null)
+    setScheduleOpen(false)
+    setFrequency("hourly")
+    setScheduleTime("09:00")
+    setWeekday("0")
+    setMonthDay("1")
+    setCustomCron(null)
+    setError("")
+  }
 
-    setSaving(true)
-    setMessage("")
-    try {
-      await updatePodcast(editingPodcast.name, podcast)
-      setEditingPodcast(null)
-      setMessage("播客配置已更新，定时任务已生效。")
-      await load()
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "更新失败")
-    } finally {
-      setSaving(false)
+  function openEditor(podcast: Podcast) {
+    const schedule = parseScheduleCron(podcast.update_period_cron)
+    if (schedule) {
+      setFrequency(schedule.frequency)
+      setScheduleTime(schedule.time)
+      setWeekday(schedule.weekday)
+      setMonthDay(schedule.monthDay)
+      setCustomCron(null)
+    } else {
+      setCustomCron(podcast.update_period_cron)
     }
+    setError("")
+    setEditingPodcast(podcast)
   }
 
   async function remove(name: string) {
@@ -125,9 +120,9 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
   }
 
   const episodeCount = podcasts.reduce((sum, item) => sum + (item.episode_count || 0), 0)
-  const validSchedule = (frequency === "hourly" || frequency === "minutes15" || /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(scheduleTime))
+  const validSchedule = customCron !== null ? Boolean(customCron.trim()) : (frequency === "hourly" || frequency === "minutes15" || /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(scheduleTime))
     && (frequency !== "monthly" || (Number.isInteger(Number(monthDay)) && Number(monthDay) >= 1 && Number(monthDay) <= 31))
-  const scheduleDescription = validSchedule ? describeSchedule(scheduleCron(frequency, scheduleTime, weekday, monthDay)) : "请完善更新计划"
+  const scheduleDescription = customCron ?? (validSchedule ? describeSchedule(scheduleCron(frequency, scheduleTime, weekday, monthDay)) : "请完善更新计划")
 
   return (
     <>
@@ -157,17 +152,12 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
           <Card><CardHeader className="pb-3"><CardDescription>已下载内容</CardDescription><CardTitle className="text-3xl">{episodeCount}</CardTitle></CardHeader></Card>
         </div>
 
-        <Dialog open={addOpen} onOpenChange={(open) => {
+        <Dialog open={addOpen || Boolean(editingPodcast)} onOpenChange={(open) => {
           if (saving) return
-          setAddOpen(open)
-          setError("")
-          if (!open) {
-            setScheduleOpen(false)
-            setFrequency("hourly")
-            setScheduleTime("09:00")
-            setWeekday("0")
-            setMonthDay("1")
-          }
+          if (open) {
+            setError("")
+            setAddOpen(true)
+          } else closeForm()
         }}>
           <Card>
             <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
@@ -206,7 +196,7 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
                       <TableCell>{podcast.keep_latest ?? "全部"}</TableCell>
                       <TableCell onClick={(event) => event.stopPropagation()}>
                         <div className="flex justify-end gap-1">
-                          <Button size="sm" variant="ghost" aria-label={`编辑 ${podcast.name}`} onClick={() => { setError(""); setEditingPodcast(podcast) }}><Pencil />编辑</Button>
+                          <Button size="sm" variant="ghost" aria-label={`编辑 ${podcast.name}`} onClick={() => openEditor(podcast)}><Pencil />编辑</Button>
                           <Button asChild size="sm" variant="ghost"><a href={`/rss/${encodeURIComponent(podcast.name)}`} target="_blank" rel="noreferrer"><ExternalLink />RSS</a></Button>
                           <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => void remove(podcast.name)}><Trash2 />移除</Button>
                         </div>
@@ -219,12 +209,18 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
           </CardContent>
           </Card>
 
-          <DialogContent>
-            <DialogHeader><DialogTitle>添加播客</DialogTitle><DialogDescription>支持 Bilibili 和 YouTube 播放列表。</DialogDescription></DialogHeader>
+          <DialogContent key={editingPodcast?.name || "add"}>
+            <DialogHeader>
+              <DialogTitle>{editingPodcast ? `编辑 ${editingPodcast.name}` : "添加播客"}</DialogTitle>
+              <DialogDescription>{editingPodcast ? "修改播客配置并保存。" : "支持 Bilibili 和 YouTube 播放列表。"}</DialogDescription>
+            </DialogHeader>
             {error && <Alert className="border-destructive/40 bg-destructive/5 text-destructive"><AlertTitle>操作失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-            <form className="grid gap-5" onSubmit={add}>
+            <form className="grid gap-5" onSubmit={save}>
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="名称" htmlFor="name"><Input id="name" name="name" required maxLength={64} pattern="[\w-]+" placeholder="weekly-news" /></Field>
+                <Field label="名称" htmlFor="name"><Input id="name" name="name" required maxLength={64} pattern="[\w-]+" placeholder="weekly-news" defaultValue={editingPodcast?.name} readOnly={Boolean(editingPodcast)} /></Field>
+                {customCron !== null ? (
+                  <Field label="更新计划（Cron）" htmlFor="cron"><Input id="cron" required value={customCron} onChange={(event) => setCustomCron(event.target.value)} /></Field>
+                ) : (
                 <Field label="更新频率" htmlFor="schedule-trigger">
                   <Popover open={scheduleOpen} onOpenChange={setScheduleOpen}>
                     <PopoverTrigger asChild>
@@ -254,38 +250,17 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
                     </PopoverContent>
                   </Popover>
                 </Field>
-                <Field className="sm:col-span-2" label="播放列表地址" htmlFor="url"><Input id="url" name="url" type="url" required placeholder="https://..." /></Field>
-                <Field label="保留最新集数" htmlFor="keep"><Input id="keep" name="keep_latest" type="number" min={1} placeholder="留空则不清理" /></Field>
-                <Field label="每次扫描数量" htmlFor="page-size"><Input id="page-size" name="page_size" type="number" min={1} defaultValue={20} /></Field>
-                <Field label="排序字段" htmlFor="sort-by"><NativeSelect id="sort-by" name="sort_by" defaultValue="date"><option value="date">发布时间</option><option value="title">标题</option></NativeSelect></Field>
-                <Field label="播放列表顺序" htmlFor="sort-order"><NativeSelect id="sort-order" name="sort_order" defaultValue="desc"><option value="desc">新到旧</option><option value="asc">旧到新</option></NativeSelect></Field>
+                )}
+                <Field className="sm:col-span-2" label="播放列表地址" htmlFor="url"><Input id="url" name="url" type="url" required placeholder="https://..." defaultValue={editingPodcast?.url} /></Field>
+                <Field label="保留最新集数" htmlFor="keep"><Input id="keep" name="keep_latest" type="number" min={1} placeholder="留空则不清理" defaultValue={editingPodcast?.keep_latest ?? ""} /></Field>
+                <Field label="每次扫描数量" htmlFor="page-size"><Input id="page-size" name="page_size" type="number" min={1} defaultValue={editingPodcast?.page_size ?? 20} /></Field>
+                <Field label="排序字段" htmlFor="sort-by"><NativeSelect id="sort-by" name="sort_by" defaultValue={editingPodcast?.sort_by ?? "date"}><option value="date">发布时间</option><option value="title">标题</option></NativeSelect></Field>
+                <Field label="播放列表顺序" htmlFor="sort-order"><NativeSelect id="sort-order" name="sort_order" defaultValue={editingPodcast?.sort_order ?? "desc"}><option value="desc">新到旧</option><option value="asc">旧到新</option></NativeSelect></Field>
               </div>
               <p className="text-sm text-muted-foreground">定时任务按服务器时区执行。</p>
-              <div className="flex justify-end"><Button type="submit" disabled={saving || !validSchedule}>{saving ? <LoaderCircle className="animate-spin" /> : <Plus />}添加播客</Button></div>
+              <div className="flex justify-end"><Button type="submit" disabled={saving || !validSchedule}>{saving ? <LoaderCircle className="animate-spin" /> : editingPodcast ? <Pencil /> : <Plus />}{editingPodcast ? "保存" : "添加播客"}</Button></div>
             </form>
           </DialogContent>
-        </Dialog>
-        <Dialog open={Boolean(editingPodcast)} onOpenChange={(open) => { if (!open && !saving) { setEditingPodcast(null); setError("") } }}>
-          {editingPodcast && (
-            <DialogContent>
-              <DialogHeader><DialogTitle>编辑 {editingPodcast.name}</DialogTitle><DialogDescription>播客名称不可修改。</DialogDescription></DialogHeader>
-              {error && <Alert className="border-destructive/40 bg-destructive/5 text-destructive"><AlertTitle>操作失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-              <form className="grid gap-5" onSubmit={edit}>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field className="sm:col-span-2" label="播放列表地址" htmlFor="edit-url"><Input id="edit-url" name="url" type="url" required defaultValue={editingPodcast.url} /></Field>
-                  <Field className="sm:col-span-2" label="更新计划（Cron）" htmlFor="edit-cron"><Input id="edit-cron" name="update_period_cron" required defaultValue={editingPodcast.update_period_cron} /></Field>
-                  <Field label="保留最新集数" htmlFor="edit-keep"><Input id="edit-keep" name="keep_latest" type="number" min={1} defaultValue={editingPodcast.keep_latest ?? ""} placeholder="留空则不清理" /></Field>
-                  <Field label="每次扫描数量" htmlFor="edit-page-size"><Input id="edit-page-size" name="page_size" type="number" min={1} defaultValue={editingPodcast.page_size} /></Field>
-                  <Field label="排序字段" htmlFor="edit-sort-by"><NativeSelect id="edit-sort-by" name="sort_by" defaultValue={editingPodcast.sort_by}><option value="date">发布时间</option><option value="title">标题</option></NativeSelect></Field>
-                  <Field label="播放列表顺序" htmlFor="edit-sort-order"><NativeSelect id="edit-sort-order" name="sort_order" defaultValue={editingPodcast.sort_order}><option value="desc">新到旧</option><option value="asc">旧到新</option></NativeSelect></Field>
-                </div>
-                <div className="flex justify-end gap-2">
-                  <Button type="button" variant="outline" disabled={saving} onClick={() => { setEditingPodcast(null); setError("") }}>取消</Button>
-                  <Button type="submit" disabled={saving}>{saving ? <LoaderCircle className="animate-spin" /> : <Pencil />}保存</Button>
-                </div>
-              </form>
-            </DialogContent>
-          )}
         </Dialog>
       </main>
     </>

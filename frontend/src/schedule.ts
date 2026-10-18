@@ -1,5 +1,27 @@
 export type Frequency = "minutes15" | "hourly" | "daily" | "weekly" | "monthly"
 
+export type ScheduleFields = {
+  frequency: Frequency
+  time: string
+  weekday: string
+  monthDay: string
+}
+
+export function parseScheduleCron(cron: string): ScheduleFields | null {
+  if (cron === "*/15 * * * *") return { frequency: "minutes15", time: "09:00", weekday: "0", monthDay: "1" }
+  if (cron === "0 * * * *") return { frequency: "hourly", time: "09:00", weekday: "0", monthDay: "1" }
+
+  const fields = cron.trim().split(/\s+/)
+  if (fields.length !== 5) return null
+  const [minute, hour, day, month, weekday] = fields
+  if (!/^(?:[01]?\d|2[0-3])$/.test(hour) || !/^(?:[0-9]|[1-5]\d)$/.test(minute) || month !== "*") return null
+  const time = `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`
+  if (day === "*" && weekday === "*") return { frequency: "daily", time, weekday: "0", monthDay: "1" }
+  if (day === "*" && /^[0-6]$/.test(weekday)) return { frequency: "weekly", time, weekday, monthDay: "1" }
+  if (/^(?:[1-9]|[12]\d|3[01])$/.test(day) && weekday === "*") return { frequency: "monthly", time, weekday: "0", monthDay: day }
+  return null
+}
+
 const weekdays = ["一", "二", "三", "四", "五", "六", "日"]
 
 export function scheduleCron(frequency: Frequency, time: string, weekday: string, monthDay: string): string {
