@@ -163,3 +163,10 @@ cython_debug/
 
 database.db
 config.yaml
+youtube_cookies.txt
+
+# React admin frontend
+node_modules/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts

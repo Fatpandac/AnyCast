@@ -10,16 +10,29 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 from pathlib import Path
 
+from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from feedgen.feed import FeedGenerator
-from src.config import check_config_file, get_config
-from src.database import get_episodes, get_podcast, init_database
+from src.admin import (
+    PodcastPayload,
+    check_admin_request_origin,
+    require_admin,
+    uses_default_admin_password,
+)
+from src.config import add_podcast, check_config_file, get_config, remove_podcast
+from src.database import (
+    count_episodes_by_podcast,
+    get_episodes,
+    get_podcast,
+    init_database,
+)
 from src.downloader import run_downloader, request_stop, request_stop_reset
-from src.jobs import start_cron_jobs, stop_cron_jobs
+from src.jobs import start_cron_jobs, stop_cron_jobs, sync_cron_jobs
 
 
 log = logging.getLogger(__name__)
@@ -56,11 +69,83 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_admin_static_dir = Path(__file__).resolve().parent / "admin_static"
+_admin_index = _admin_static_dir / "index.html"
+app.mount(
+    "/admin/assets",
+    StaticFiles(directory=_admin_static_dir / "assets", check_dir=False),
+    name="admin-assets",
+)
+
 
 @app.get("/")
 async def root():
     podcasts = _get_podcasts_from_file()
     return {"status": "ok", "podcast_count": len(podcasts)}
+
+
+@app.get("/api/admin/podcasts")
+async def admin_podcasts(_auth: None = Depends(require_admin)):
+    podcasts = [
+        {**podcast, "episode_count": count_episodes_by_podcast(podcast["name"])}
+        for podcast in _get_podcasts_from_file()
+    ]
+    return {
+        "podcasts": podcasts,
+        "uses_default_password": uses_default_admin_password(),
+    }
+
+
+@app.post("/api/admin/podcasts", status_code=201)
+async def admin_add_podcast(
+    payload: PodcastPayload,
+    request: Request,
+    _auth: None = Depends(require_admin),
+):
+    check_admin_request_origin(request)
+    podcast = payload.to_podcast()
+    try:
+        add_podcast(podcast)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    init_database()
+    sync_cron_jobs()
+    return {"podcast": podcast}
+
+
+@app.get("/api/admin/podcasts/{name}")
+async def admin_podcast_detail(name: str, _auth: None = Depends(require_admin)):
+    podcast = next(
+        (item for item in _get_podcasts_from_file() if item["name"] == name), None
+    )
+    if not podcast:
+        raise HTTPException(status_code=404, detail=f"Podcast {name} not found")
+    episodes = get_episodes(name, sort_by="date", sort_order="desc")
+    return {"podcast": podcast, "episodes": episodes}
+
+
+@app.delete("/api/admin/podcasts/{name}")
+async def admin_remove_podcast(
+    name: str, request: Request, _auth: None = Depends(require_admin)
+):
+    check_admin_request_origin(request)
+    try:
+        remove_podcast(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    sync_cron_jobs()
+    return {"status": "removed"}
+
+
+@app.get("/admin", include_in_schema=False)
+@app.get("/admin/{path:path}", include_in_schema=False)
+async def admin_spa(_auth: None = Depends(require_admin)):
+    if not _admin_index.exists():
+        raise HTTPException(
+            status_code=503,
+            detail="管理前端尚未构建，请运行 pnpm install && pnpm build",
+        )
+    return FileResponse(_admin_index)
 
 
 def _get_podcasts_from_file():
