@@ -7,6 +7,30 @@ A generator for creating podcasts from Bilibili and YouTube playlists.
 - 仅下载音频（`only_audio`）并落库
 - 自动生成 RSS（以播客 `name` 作为路径）
 
+## 管理后台
+
+默认凭据为 `admin / adminadmin`。服务配置中的 `0.0.0.0` 是监听地址，不能作为浏览器访问地址；本机请访问 `http://127.0.0.1:8001/admin`（端口以 `config.yaml` 为准）。首次使用后请立即通过环境变量替换默认密码：
+
+```bash
+export ANYCAST_ADMIN_PASSWORD='请替换为强密码'
+# 可选，默认用户名为 admin
+export ANYCAST_ADMIN_USERNAME='admin'
+uv run src/main.py
+```
+
+后台可以查看播客及已下载集数；点击播客名称可查看下载记录、内容简介、来源链接并在线播放或下载音频；也可以添加播客、移除播客配置。添加或移除后定时任务会立即同步；移除不会删除下载文件和历史记录。后台写入 `config.yaml` 时会保留配置值，但 YAML 中的手写注释不会保留。
+
+管理界面使用 React、shadcn/ui 和 Tailwind CSS，前端依赖统一由 pnpm 管理。仓库已包含可直接运行的构建产物；修改前端时使用：
+
+```bash
+pnpm install
+pnpm dev       # 开发服务器，API 默认代理到 127.0.0.1:8001
+pnpm test
+pnpm build     # 生产文件输出到 src/admin_static
+```
+
+管理后台使用 HTTP Basic Authentication。部署到公网时必须先替换默认密码，并放在 HTTPS 反向代理后，不要通过明文 HTTP 传输密码。未设置 `ANYCAST_ADMIN_PASSWORD` 时，后台会显示默认密码警告。
+
 ## API
 
 - `GET /podcasts`：获取所有配置中的播客
