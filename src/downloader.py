@@ -564,9 +564,10 @@ def _run_youtube_download(
             "需要 ffmpeg 将音频转换为 m4a 格式。" "请先安装 ffmpeg 并确保它在 PATH 中。"
         )
     options = {
-        "format": "bestaudio[ext=m4a]/bestaudio/bestvideo+bestaudio/best",
+        # 某些视频只有带音频的低清流；转码后仅保留音频，不退回无声视频。
+        "format": "worstaudio/worst[acodec!=none]",
         "paths": {"home": str(target_dir)},
-        "outtmpl": {"default": "%(title).200B [%(id)s].%(ext)s"},
+        "outtmpl": {"default": "%(title).200B [%(id)s] [%(format_id)s].%(ext)s"},
         "no_warnings": True,
         "noplaylist": True,
         # HLS 分片缺失时直接报错。yt-dlp 默认会跳过坏分片并照常收尾，产出的残缺

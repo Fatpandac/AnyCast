@@ -115,9 +115,38 @@ def test_youtube_playlist_entries_are_collected(monkeypatch):
     }
 
 
+def test_youtube_format_prefers_audio_then_lowest_muxed_and_never_video_only():
+    from yt_dlp import YoutubeDL
+
+    selector = YoutubeDL({"quiet": True}).build_format_selector(
+        "worstaudio/worst[acodec!=none]"
+    )
+    video = {"format_id": "video", "vcodec": "h264", "acodec": "none"}
+    muxed = {"format_id": "small-muxed", "vcodec": "h264", "acodec": "aac"}
+    audio = {"format_id": "audio-only", "vcodec": "none", "acodec": "aac"}
+
+    def selected(formats):
+        return [
+            item["format_id"]
+            for item in selector(
+                {
+                    "formats": formats,
+                    "incomplete_formats": False,
+                    "has_merged_format": True,
+                }
+            )
+        ]
+
+    assert selected([video, muxed, audio]) == ["audio-only"]
+    assert selected([video, muxed]) == ["small-muxed"]
+    assert selected([video]) == []
+
+
 def test_youtube_episode_downloads_audio(monkeypatch, tmp_path):
     target_dir = tmp_path / "downloads"
     target_dir.mkdir()
+    legacy_partial = target_dir / "downloaded-audio [abc123].mp4.part"
+    legacy_partial.write_bytes(b"old video partial")
 
     class FakeYoutubeDL:
         def __init__(self, options):
@@ -132,7 +161,11 @@ def test_youtube_episode_downloads_audio(monkeypatch, tmp_path):
         def extract_info(self, url, download):
             assert url == "https://www.youtube.com/watch?v=abc123"
             assert download is True
-            assert self.options["format"].startswith("bestaudio[ext=m4a]")
+            assert self.options["format"] == "worstaudio/worst[acodec!=none]"
+            assert (
+                self.options["outtmpl"]["default"]
+                == "%(title).200B [%(id)s] [%(format_id)s].%(ext)s"
+            )
             assert self.options["paths"]["home"] == str(target_dir)
             written = Path(self.options["paths"]["home"], "downloaded-audio.m4a")
             written.write_bytes(b"audio")
@@ -152,6 +185,7 @@ def test_youtube_episode_downloads_audio(monkeypatch, tmp_path):
     )
 
     assert file_name == "downloaded-audio.m4a"
+    assert legacy_partial.read_bytes() == b"old video partial"
 
 
 def test_youtube_episode_returns_name_when_file_already_exists(monkeypatch, tmp_path):
