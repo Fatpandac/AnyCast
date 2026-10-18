@@ -9,7 +9,7 @@ A generator for creating podcasts from Bilibili and YouTube playlists.
 
 ## 管理后台
 
-默认凭据为 `admin / adminadmin`。服务配置中的 `0.0.0.0` 是监听地址，不能作为浏览器访问地址；本机请访问 `http://127.0.0.1:8001/admin`（端口以 `config.yaml` 为准）。首次使用后请立即通过环境变量替换默认密码：
+默认凭据为 `admin / adminadmin`。服务配置中的 `0.0.0.0` 是监听地址，不能作为浏览器访问地址；本机请访问 `http://127.0.0.1:8001/admin`（端口以 `config.yaml` 为准）。首次使用后请立即在后台「设置 → 管理员密码」修改密码（至少 12 位），或通过环境变量设置初始密码：
 
 ```bash
 export ANYCAST_ADMIN_PASSWORD='请替换为强密码'
@@ -17,6 +17,8 @@ export ANYCAST_ADMIN_PASSWORD='请替换为强密码'
 export ANYCAST_ADMIN_USERNAME='admin'
 uv run src/main.py
 ```
+
+后台修改密码后立即生效，无需重启；新密码只以加盐 PBKDF2 哈希保存在本机 `config.yaml` 的 `admin.password_hash`，优先于环境变量。如忘记密码，可停机后手动删除该字段，重启后使用环境变量密码（或默认密码）登录并立即重新设置。请勿将 `config.yaml` 分享给他人。
 
 后台可以查看播客及已下载集数；点击播客名称可查看下载记录、内容简介、来源链接并在线播放或下载音频；也可以添加播客、移除播客配置。添加或移除后定时任务会立即同步；移除不会删除下载文件和历史记录。后台写入 `config.yaml` 时会保留配置值，但 YAML 中的手写注释不会保留。
 
@@ -29,7 +31,7 @@ pnpm test
 pnpm build     # 生产文件输出到 src/admin_static
 ```
 
-管理后台使用 HTTP Basic Authentication。部署到公网时必须先替换默认密码，并放在 HTTPS 反向代理后，不要通过明文 HTTP 传输密码。未设置 `ANYCAST_ADMIN_PASSWORD` 时，后台会显示默认密码警告。
+管理后台使用 HTTP Basic Authentication。部署到公网时必须先替换默认密码，并放在 HTTPS 反向代理后，不要通过明文 HTTP 传输密码。使用默认密码时，后台会显示警告；虽然也能编辑 Cookie 文件，但已知默认密码的任何人都可能读取其中的敏感凭据。
 
 ## API
 

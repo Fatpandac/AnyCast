@@ -1,0 +1,219 @@
+import { FormEvent, useEffect, useState } from "react"
+import { ArrowLeft, LoaderCircle, Save } from "lucide-react"
+
+import { changeAdminPassword, getCookieFile, getSettings, saveCookieFile, saveSettings, type Settings } from "@/api"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+
+type CookieSource = "none" | "file" | "browser"
+
+export function SettingsPage({ goBack }: { goBack: () => void }) {
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [source, setSource] = useState<CookieSource>("none")
+  const [error, setError] = useState("")
+  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [cookieFilePath, setCookieFilePath] = useState("")
+  const [cookieContent, setCookieContent] = useState<string | null>(null)
+  const [cookieRevision, setCookieRevision] = useState("")
+  const [cookieError, setCookieError] = useState("")
+  const [cookieSaved, setCookieSaved] = useState(false)
+  const [cookieSaving, setCookieSaving] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
+  const [passwordError, setPasswordError] = useState("")
+  const [passwordSaved, setPasswordSaved] = useState(false)
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const [passwordOpen, setPasswordOpen] = useState(false)
+
+  function togglePasswordDialog(open: boolean) {
+    if (passwordSaving) return
+    setPasswordOpen(open)
+    setCurrentPassword("")
+    setNewPassword("")
+    setConfirmPassword("")
+    setPasswordError("")
+  }
+
+  useEffect(() => {
+    let active = true
+    setCookieContent(null)
+    setCookieError("")
+    setCookieSaved(false)
+    if (cookieFilePath) {
+      void getCookieFile().then((data) => {
+        if (active) {
+          if (data.path === cookieFilePath) {
+            setCookieContent(data.content)
+            setCookieRevision(data.revision)
+          }
+          else setCookieError("配置已变更，请刷新页面")
+        }
+      }).catch((reason) => {
+        if (active) setCookieError(reason instanceof Error ? reason.message : "读取 Cookie 文件失败")
+      })
+    }
+    return () => { active = false }
+  }, [cookieFilePath])
+
+  async function submitCookieFile() {
+    if (cookieContent === null) return
+    setCookieSaving(true)
+    setCookieSaved(false)
+    setCookieError("")
+    try {
+      const data = await saveCookieFile(cookieFilePath, cookieContent, cookieRevision)
+      setCookieRevision(data.revision)
+      setCookieSaved(true)
+    } catch (reason) {
+      setCookieError(reason instanceof Error ? reason.message : "保存 Cookie 文件失败")
+    } finally {
+      setCookieSaving(false)
+    }
+  }
+
+
+  useEffect(() => {
+    void getSettings().then((data) => {
+      setSettings(data)
+      setCookieFilePath(data.youtube.cookies_file)
+      setSource(data.youtube.cookies_file ? "file" : data.youtube.cookies_from_browser ? "browser" : "none")
+    }).catch((reason) => setError(reason instanceof Error ? reason.message : "加载失败"))
+  }, [])
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!settings) return
+    setSaving(true)
+    setError("")
+    setSaved(false)
+    try {
+      const data = await saveSettings({
+        server: { host: settings.server.host.trim(), port: settings.server.port },
+        youtube: {
+          cookies_file: source === "file" ? settings.youtube.cookies_file.trim() : "",
+          cookies_from_browser: source === "browser" ? settings.youtube.cookies_from_browser.trim() : "",
+        },
+      })
+      setSettings(data)
+      setCookieFilePath(data.youtube.cookies_file)
+      setSaved(true)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "保存失败")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function submitPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setPasswordError("")
+    if (newPassword !== confirmPassword) {
+      setPasswordError("两次输入的新密码不一致")
+      return
+    }
+    setPasswordSaving(true)
+    setPasswordSaved(false)
+    try {
+      await changeAdminPassword(currentPassword, newPassword)
+      setCurrentPassword("")
+      setNewPassword("")
+      setConfirmPassword("")
+      setCookieContent(null)
+      setPasswordOpen(false)
+      setPasswordSaved(true)
+    } catch (reason) {
+      setPasswordError(reason instanceof Error ? reason.message : "修改密码失败")
+    } finally {
+      setPasswordSaving(false)
+    }
+  }
+
+  return (
+    <>
+      <header className="border-b bg-card">
+        <div className="mx-auto max-w-3xl px-4 py-5 sm:px-6">
+          <Button variant="ghost" size="sm" className="-ml-3 mb-3 text-muted-foreground" onClick={goBack}><ArrowLeft />返回管理后台</Button>
+          <h1 className="text-2xl font-semibold tracking-tight">AnyCast 设置</h1>
+          <p className="mt-1 text-sm text-muted-foreground">管理服务监听和 YouTube 下载选项</p>
+        </div>
+      </header>
+      <main className="mx-auto grid max-w-3xl gap-5 px-4 py-6 sm:px-6">
+        {error && <Alert className="border-destructive/40 bg-destructive/5 text-destructive" role="alert"><AlertTitle>操作失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+        {saved && <Alert role="status"><AlertDescription>设置已保存。修改监听地址或端口后，请重启服务；YouTube Cookie 设置将在下次下载时生效。</AlertDescription></Alert>}
+        {!settings && !error && <div className="flex justify-center py-16 text-muted-foreground"><LoaderCircle className="size-6 animate-spin" /></div>}
+        {settings && (
+          <form className="grid gap-8" onSubmit={(event) => void submit(event)}>
+            <section aria-labelledby="server-settings-title" className="grid gap-4 border-b pb-8">
+              <div className="space-y-1">
+                <h2 id="server-settings-title" className="text-lg font-semibold">服务监听</h2>
+                <p className="text-sm text-muted-foreground">修改监听地址或端口后需重启服务；0.0.0.0 仅用于监听，浏览器应使用服务器 IP 或域名访问。</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-2"><Label htmlFor="server-host">监听地址</Label><Input id="server-host" required value={settings.server.host} onChange={(event) => setSettings({ ...settings, server: { ...settings.server, host: event.target.value } })} /></div>
+                <div className="grid gap-2"><Label htmlFor="server-port">监听端口</Label><Input id="server-port" type="number" required min={1} max={65535} value={settings.server.port} onChange={(event) => setSettings({ ...settings, server: { ...settings.server, port: Number(event.target.value) } })} /></div>
+              </div>
+            </section>
+            <section aria-labelledby="youtube-settings-title" className="grid gap-4 border-b pb-8">
+              <div className="space-y-1">
+                <h2 id="youtube-settings-title" className="text-lg font-semibold">YouTube Cookie</h2>
+                <p className="text-sm text-muted-foreground">选择一种来源以绕过 bot 检测。文件模式下可查看、编辑服务器上的 Cookie 内容；这是敏感凭据，建议修改默认管理密码并使用 HTTPS 访问。</p>
+              </div>
+              <div className="grid gap-4">
+                <div className="grid gap-2"><Label htmlFor="cookie-source">Cookie 来源</Label>
+                  <Select value={source} onValueChange={(value) => setSource(value as CookieSource)}><SelectTrigger id="cookie-source" aria-label="Cookie 来源"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">不使用</SelectItem><SelectItem value="file">Cookie 文件</SelectItem><SelectItem value="browser">服务器浏览器</SelectItem></SelectContent></Select>
+                </div>
+                {source === "file" && <>
+                  <div className="grid gap-2"><Label htmlFor="cookies-file">Cookie 文件路径</Label><Input id="cookies-file" required placeholder="/path/to/cookies.txt" value={settings.youtube.cookies_file} onChange={(event) => setSettings({ ...settings, youtube: { ...settings.youtube, cookies_file: event.target.value } })} /></div>
+                  {settings.youtube.cookies_file !== cookieFilePath ? <p className="text-sm text-muted-foreground">请先保存新的文件路径，再编辑文件内容。</p> : <>
+                    {cookieError && <Alert className="border-destructive/40 bg-destructive/5 text-destructive" role="alert"><AlertDescription>{cookieError}{cookieError.includes("文件不存在") && "。请先将上方路径改成服务器上已有的 Cookie 文件并保存设置。"}</AlertDescription></Alert>}
+                    {cookieContent !== null && <div className="grid gap-2">
+                      <Label htmlFor="cookie-content">Cookie 文件内容</Label>
+                      <textarea id="cookie-content" rows={10} spellCheck={false} autoComplete="off" className="w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" value={cookieContent} onChange={(event) => { setCookieContent(event.target.value); setCookieSaved(false) }} />
+                      <div className="flex items-center justify-between gap-3"><p className="text-sm text-muted-foreground">仅支持 Netscape 格式，最大 1 MiB；文件内容不会写入 config.yaml。</p><Button type="button" variant="outline" disabled={cookieSaving} onClick={() => void submitCookieFile()}>{cookieSaving && <LoaderCircle className="animate-spin" />}保存 Cookie 文件</Button></div>
+                      {cookieSaved && <p className="text-sm text-emerald-700">Cookie 文件已保存，后续下载将使用新内容。</p>}
+                    </div>}
+                  </>}
+                </>}
+
+                {source === "browser" && <div className="grid gap-2"><Label htmlFor="cookies-browser">服务器浏览器名称</Label><Input id="cookies-browser" required placeholder="chrome / firefox / safari" value={settings.youtube.cookies_from_browser} onChange={(event) => setSettings({ ...settings, youtube: { ...settings.youtube, cookies_from_browser: event.target.value } })} /></div>}
+              </div>
+            </section>
+            <div className="flex justify-end"><Button type="submit" disabled={saving}>{saving ? <LoaderCircle className="animate-spin" /> : <Save />}保存设置</Button></div>
+          </form>
+        )}
+        <section aria-labelledby="security-settings-title" className="grid gap-4 py-2">
+          <div className="space-y-1">
+            <h2 id="security-settings-title" className="text-lg font-semibold">安全设置</h2>
+            <p className="text-sm text-muted-foreground">管理员密码可在此修改，保存后立即生效。</p>
+          </div>
+          {passwordSaved && <Alert role="status"><AlertDescription>密码已修改。请用新密码重新登录（可刷新页面）。</AlertDescription></Alert>}
+          <div className="flex items-center justify-between gap-4 border-t py-4">
+            <div><p className="font-medium">管理员密码</p><p className="text-sm text-muted-foreground">修改登录管理后台使用的密码</p></div>
+            <Dialog open={passwordOpen} onOpenChange={togglePasswordDialog}>
+              <DialogTrigger asChild><Button type="button" variant="outline">修改密码</Button></DialogTrigger>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>修改管理员密码</DialogTitle>
+                  <DialogDescription>保存后立即生效，无需重启。新密码将以加盐哈希保存在本机 config.yaml 中，优先于 ANYCAST_ADMIN_PASSWORD 环境变量；请妥善保管。</DialogDescription>
+                </DialogHeader>
+                <form className="grid gap-4" onSubmit={(event) => void submitPassword(event)}>
+                  <div className="grid gap-2"><Label htmlFor="current-password">当前密码</Label><Input id="current-password" type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></div>
+                  <div className="grid gap-2"><Label htmlFor="new-password">新密码</Label><Input id="new-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></div>
+                  <div className="grid gap-2"><Label htmlFor="confirm-password">确认新密码</Label><Input id="confirm-password" type="password" autoComplete="new-password" required value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></div>
+                  {passwordError && <Alert className="border-destructive/40 bg-destructive/5 text-destructive" role="alert"><AlertDescription>{passwordError}</AlertDescription></Alert>}
+                  <div className="flex justify-end"><Button type="submit" disabled={passwordSaving}>{passwordSaving && <LoaderCircle className="animate-spin" />}修改密码</Button></div>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </section>
+      </main>
+    </>
+  )
+}

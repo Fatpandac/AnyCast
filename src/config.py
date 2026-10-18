@@ -2,6 +2,9 @@
 from typing import Literal, TypedDict
 from apscheduler.executors.base import logging
 from pathlib import Path
+import hashlib
+import os
+import tempfile
 import threading
 import yaml
 
@@ -94,6 +97,101 @@ def _write_config(config: dict) -> None:
         encoding="utf-8",
     )
     temporary.replace(path)
+
+
+def get_admin_password_hash() -> str | None:
+    with open(__get_config_file(), "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+    return (config.get("admin") or {}).get("password_hash")
+
+
+def update_admin_password_hash(previous_hash: str | None, password_hash: str) -> None:
+    with _config_lock:
+        with open(__get_config_file(), "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        admin = config.get("admin") or {}
+        if admin.get("password_hash") != previous_hash:
+            raise ValueError("密码已被其他请求修改，请刷新后重试")
+        config["admin"] = {**admin, "password_hash": password_hash}
+        _write_config(config)
+
+
+def get_admin_settings() -> dict:
+    config = get_config()
+    server = config.get("server") or {}
+    youtube = config.get("youtube") or {}
+    return {
+        "server": {
+            "host": server.get("host", "0.0.0.0"),
+            "port": server.get("port", 8000),
+        },
+        "youtube": {
+            "cookies_file": youtube.get("cookies_file") or "",
+            "cookies_from_browser": youtube.get("cookies_from_browser") or "",
+        },
+    }
+
+
+def update_admin_settings(server: ServerConfig, youtube: YouTubeConfig) -> None:
+    with _config_lock:
+        with open(__get_config_file(), "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        config["server"] = {**(config.get("server") or {}), **server}
+        existing_youtube = dict(config.get("youtube") or {})
+        existing_youtube.pop("cookies_file", None)
+        existing_youtube.pop("cookies_from_browser", None)
+        config["youtube"] = {
+            **existing_youtube,
+            **{key: value for key, value in youtube.items() if value},
+        }
+        _write_config(config)
+
+
+def get_admin_cookie_file() -> dict:
+    with _config_lock:
+        with open(__get_config_file(), "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        path = (config.get("youtube") or {}).get("cookies_file")
+        if not path:
+            raise FileNotFoundError("未配置 Cookie 文件")
+        if not Path(path).is_file():
+            raise FileNotFoundError(f"Cookie 文件不存在或不是普通文件：{path}")
+        with open(path, "rb") as f:
+            content = f.read(1048577)
+        if len(content) > 1048576:
+            raise ValueError("Cookie 文件超过 1 MiB，无法在线编辑")
+        return {
+            "path": path,
+            "content": content.decode("utf-8"),
+            "revision": hashlib.sha256(content).hexdigest(),
+        }
+
+
+def update_admin_cookie_file(path: str, content: str, revision: str) -> str:
+    with _config_lock:
+        with open(__get_config_file(), "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        configured = (config.get("youtube") or {}).get("cookies_file")
+        if not configured or path != configured:
+            raise ValueError("Cookie 文件路径已改变，请刷新页面")
+        target = Path(configured)
+        if not target.is_file():
+            raise FileNotFoundError(f"Cookie 文件不存在：{configured}")
+        if target.is_symlink():
+            raise ValueError("请将 Cookie 文件路径指向实际文件，而不是符号链接")
+        with open(target, "rb") as f:
+            current = f.read(1048577)
+        if hashlib.sha256(current).hexdigest() != revision:
+            raise ValueError("Cookie 文件已被修改，请刷新页面后重试")
+        fd, temporary = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(temporary, target)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def add_podcast(podcast: Podcast) -> None:

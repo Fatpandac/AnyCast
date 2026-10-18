@@ -10,6 +10,7 @@ import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -17,7 +18,7 @@ from bilix.sites.bilibili import api
 from bilix.sites.bilibili.downloader import DownloaderBilibili
 from yt_dlp import YoutubeDL
 
-from src.config import DEFAULT_PAGE_SIZE, Podcast, get_config
+from src.config import Podcast, get_config
 from src.database import (
     cleanup_old_episodes,
     get_cached_episode_meta,
@@ -206,9 +207,9 @@ def _isolated_cookiefile(options: dict):
 
 
 def _extract_youtube_info(url: str, download: bool, options: dict) -> dict:
-    with _isolated_cookiefile(options) as opts, YoutubeDL(opts) as ydl:
-        return ydl.extract_info(url, download=download) or {}
-
+    # yt-dlp 的参数和结果来自动态配置；调用方按字典使用其运行时结构。
+    with _isolated_cookiefile(options) as opts, YoutubeDL(cast(Any, opts)) as ydl:
+        return cast(dict, ydl.extract_info(url, download=download) or {})
 
 
 def _detail_semaphore() -> asyncio.Semaphore:
@@ -267,7 +268,9 @@ def _entry_id(entry: dict) -> str:
     return str(entry.get("id") or _youtube_source_url(entry))
 
 
-def _newest_window(flat_entries: list[dict], page_size: int, sort_order: str) -> list[dict]:
+def _newest_window(
+    flat_entries: list[dict], page_size: int, sort_order: str
+) -> list[dict]:
     """从播放列表里截出最新的 page_size 条。
 
     播放列表顺序由 sort_order 描述：desc 表示新在前，从头部切；asc 表示旧在前，
@@ -276,7 +279,9 @@ def _newest_window(flat_entries: list[dict], page_size: int, sort_order: str) ->
     """
     if len(flat_entries) <= page_size:
         return flat_entries
-    return flat_entries[:page_size] if sort_order == "desc" else flat_entries[-page_size:]
+    return (
+        flat_entries[:page_size] if sort_order == "desc" else flat_entries[-page_size:]
+    )
 
 
 def _episode_from_entry(entry: dict) -> dict:
@@ -303,7 +308,10 @@ async def _collect_youtube_episodes(podcast: Podcast) -> list[dict]:
 
     # 第一步：扁平列表，只拿 id / 标题 / 缩略图，几秒钟就能返回
     info = await asyncio.to_thread(
-        _extract_youtube_info, podcast["url"], False, {**base_options, "extract_flat": True}
+        _extract_youtube_info,
+        podcast["url"],
+        False,
+        {**base_options, "extract_flat": True},
     )
     flat_entries = [entry for entry in (info.get("entries") or [info]) if entry]
 
@@ -553,8 +561,7 @@ def _run_youtube_download(
 ) -> str | None:
     if not shutil.which("ffmpeg"):
         raise RuntimeError(
-            "需要 ffmpeg 将音频转换为 m4a 格式。"
-            "请先安装 ffmpeg 并确保它在 PATH 中。"
+            "需要 ffmpeg 将音频转换为 m4a 格式。" "请先安装 ffmpeg 并确保它在 PATH 中。"
         )
     options = {
         "format": "bestaudio[ext=m4a]/bestaudio/bestvideo+bestaudio/best",

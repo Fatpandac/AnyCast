@@ -19,16 +19,27 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from feedgen.feed import FeedGenerator
 from src.admin import (
+    CookieFilePayload,
+    PasswordPayload,
     PodcastPayload,
+    SettingsPayload,
     check_admin_request_origin,
+    hash_admin_password,
     require_admin,
     uses_default_admin_password,
+    verify_admin_password,
 )
 from src.config import (
     add_podcast,
     check_config_file,
+    get_admin_settings,
+    get_admin_cookie_file,
+    get_admin_password_hash,
     get_config,
     remove_podcast,
+    update_admin_cookie_file,
+    update_admin_password_hash,
+    update_admin_settings,
     update_podcast,
 )
 from src.database import (
@@ -88,6 +99,80 @@ app.mount(
 async def root():
     podcasts = _get_podcasts_from_file()
     return {"status": "ok", "podcast_count": len(podcasts)}
+
+
+@app.get("/api/admin/settings")
+async def admin_settings(_auth: None = Depends(require_admin)):
+    return get_admin_settings()
+
+
+@app.put("/api/admin/settings")
+async def admin_save_settings(
+    payload: SettingsPayload, request: Request, _auth: None = Depends(require_admin)
+):
+    check_admin_request_origin(request)
+    update_admin_settings(
+        {"host": payload.server.host, "port": payload.server.port},
+        {
+            "cookies_file": payload.youtube.cookies_file,
+            "cookies_from_browser": payload.youtube.cookies_from_browser,
+        },
+    )
+    return get_admin_settings()
+
+
+@app.put("/api/admin/settings/password")
+async def admin_change_password(
+    payload: PasswordPayload, request: Request, _auth: None = Depends(require_admin)
+):
+    check_admin_request_origin(request)
+    previous_hash = get_admin_password_hash()
+    if not verify_admin_password(payload.current_password):
+        raise HTTPException(status_code=403, detail="当前密码错误")
+    if (
+        payload.new_password == payload.current_password
+        or payload.new_password == "adminadmin"
+    ):
+        raise HTTPException(
+            status_code=422, detail="新密码不能与当前密码或默认密码相同"
+        )
+    try:
+        update_admin_password_hash(
+            previous_hash, hash_admin_password(payload.new_password)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "updated"}
+
+
+@app.get("/api/admin/settings/cookies")
+async def admin_cookie_file(
+    request: Request, response: Response, _auth: None = Depends(require_admin)
+):
+    check_admin_request_origin(request)
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return get_admin_cookie_file()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.put("/api/admin/settings/cookies")
+async def admin_save_cookie_file(
+    payload: CookieFilePayload, request: Request, _auth: None = Depends(require_admin)
+):
+    check_admin_request_origin(request)
+    try:
+        revision = update_admin_cookie_file(
+            payload.path, payload.content, payload.revision
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"revision": revision}
 
 
 @app.get("/api/admin/podcasts")

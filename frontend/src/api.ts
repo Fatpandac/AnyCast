@@ -45,6 +45,35 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+export type Settings = {
+  server: { host: string; port: number }
+  youtube: { cookies_file: string; cookies_from_browser: string }
+}
+
+export function getSettings() {
+  return request<Settings>("/api/admin/settings")
+}
+
+export function saveSettings(settings: Settings) {
+  return request<Settings>("/api/admin/settings", { method: "PUT", body: JSON.stringify(settings) })
+}
+
+export function changeAdminPassword(current_password: string, new_password: string) {
+  return request<{ status: string }>("/api/admin/settings/password", {
+    method: "PUT", body: JSON.stringify({ current_password, new_password }),
+  })
+}
+
+export function getCookieFile() {
+  return request<{ path: string; content: string; revision: string }>("/api/admin/settings/cookies")
+}
+
+export function saveCookieFile(path: string, content: string, revision: string) {
+  return request<{ revision: string }>("/api/admin/settings/cookies", {
+    method: "PUT", body: JSON.stringify({ path, content, revision }),
+  })
+}
+
 export function listPodcasts() {
   return request<{ podcasts: Podcast[]; uses_default_password: boolean }>(
     "/api/admin/podcasts",

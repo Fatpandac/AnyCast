@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from "react"
-import { AlertTriangle, ChevronDown, ExternalLink, LoaderCircle, Pencil, Plus, Radio, Trash2 } from "lucide-react"
+import { AlertTriangle, ChevronDown, ExternalLink, LoaderCircle, Pencil, Plus, Radio, Settings2, Trash2 } from "lucide-react"
 
 import { createPodcast, deletePodcast, listPodcasts, updatePodcast, type Podcast, type PodcastInput } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -16,7 +16,7 @@ import { describeSchedule, parseScheduleCron, scheduleCron, type Frequency } fro
 
 const selectClass = "h-9 w-full appearance-none rounded-md border border-input bg-transparent py-1 pl-3 pr-9 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 
-export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void }) {
+export function Dashboard({ openPodcast, openSettings }: { openPodcast: (name: string) => void; openSettings: () => void }) {
   const [podcasts, setPodcasts] = useState<Podcast[]>([])
   const [usesDefaultPassword, setUsesDefaultPassword] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -129,10 +129,11 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
       <header className="border-b bg-card">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-5 sm:px-6">
           <div className="rounded-lg bg-primary p-2 text-primary-foreground"><Radio className="size-5" /></div>
-          <div>
+          <div className="min-w-0 flex-1">
             <h1 className="text-xl font-semibold tracking-tight">AnyCast 管理后台</h1>
             <p className="text-sm text-muted-foreground">管理订阅源和下载计划</p>
           </div>
+          <Button variant="outline" onClick={openSettings}><Settings2 />设置</Button>
         </div>
       </header>
 
@@ -141,7 +142,7 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
           <Alert className="border-amber-300 bg-amber-50 text-amber-950">
             <AlertTriangle className="mb-2 size-4" />
             <AlertTitle>正在使用默认密码 adminadmin</AlertTitle>
-            <AlertDescription>请立即设置 ANYCAST_ADMIN_PASSWORD 替换密码。</AlertDescription>
+            <AlertDescription>请到「设置 → 管理员密码」立即修改，或设置 ANYCAST_ADMIN_PASSWORD。</AlertDescription>
           </Alert>
         )}
         {error && !addOpen && !editingPodcast && <Alert className="border-destructive/40 bg-destructive/5 text-destructive"><AlertTitle>操作失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}

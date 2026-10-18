@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 
 import { Dashboard } from "@/Dashboard"
 import { PodcastDetail } from "@/PodcastDetail"
+import { SettingsPage } from "@/Settings"
 
 function podcastFromPath(pathname: string): string | null {
   const match = pathname.match(/^\/admin\/podcasts\/([^/]+)\/?$/)
@@ -15,9 +16,13 @@ function podcastFromPath(pathname: string): string | null {
 
 export function App() {
   const [podcastName, setPodcastName] = useState(() => podcastFromPath(window.location.pathname))
+  const [settingsOpen, setSettingsOpen] = useState(() => window.location.pathname === "/admin/settings")
 
   useEffect(() => {
-    const updateRoute = () => setPodcastName(podcastFromPath(window.location.pathname))
+    const updateRoute = () => {
+      setPodcastName(podcastFromPath(window.location.pathname))
+      setSettingsOpen(window.location.pathname === "/admin/settings")
+    }
     window.addEventListener("popstate", updateRoute)
     return () => window.removeEventListener("popstate", updateRoute)
   }, [])
@@ -27,14 +32,22 @@ export function App() {
     setPodcastName(name)
   }
 
+  function openSettings() {
+    window.history.pushState({}, "", "/admin/settings")
+    setSettingsOpen(true)
+  }
+
   function goBack() {
     window.history.pushState({}, "", "/admin")
     setPodcastName(null)
+    setSettingsOpen(false)
   }
 
-  return podcastName ? (
+  return settingsOpen ? (
+    <SettingsPage goBack={goBack} />
+  ) : podcastName ? (
     <PodcastDetail name={podcastName} goBack={goBack} />
   ) : (
-    <Dashboard openPodcast={openPodcast} />
+    <Dashboard openPodcast={openPodcast} openSettings={openSettings} />
   )
 }

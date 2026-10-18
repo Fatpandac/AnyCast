@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import secrets
 from typing import Annotated, Literal
 from urllib.parse import urlparse
@@ -9,13 +10,54 @@ from urllib.parse import urlparse
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from src.config import DEFAULT_PAGE_SIZE, Podcast
+from src.config import DEFAULT_PAGE_SIZE, Podcast, get_admin_password_hash
 
 
 _security = HTTPBasic(auto_error=False)
 _DEFAULT_ADMIN_PASSWORD = "adminadmin"
+
+
+class PasswordPayload(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=12, max_length=128)
+
+
+class ServerSettings(BaseModel):
+    host: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9.:-]+$")
+    port: int = Field(ge=1, le=65535, strict=True)
+
+
+class YouTubeSettings(BaseModel):
+    cookies_file: str = ""
+    cookies_from_browser: str = ""
+
+    @model_validator(mode="after")
+    def check_cookie_source(self):
+        if self.cookies_file and self.cookies_from_browser:
+            raise ValueError("只能选择一种 YouTube Cookie 来源")
+        return self
+
+
+class SettingsPayload(BaseModel):
+    server: ServerSettings
+    youtube: YouTubeSettings
+
+
+class CookieFilePayload(BaseModel):
+    path: str
+    revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content: str = Field(max_length=1048576)
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str) -> str:
+        if not value.startswith(("# Netscape HTTP Cookie File", "# HTTP Cookie File")):
+            raise ValueError("请输入 Netscape 格式的 Cookie 文件内容")
+        if len(value.encode("utf-8")) > 1048576:
+            raise ValueError("Cookie 文件不能超过 1 MiB")
+        return value
 
 
 class PodcastPayload(BaseModel):
@@ -57,15 +99,42 @@ class PodcastPayload(BaseModel):
         }
 
 
+def _verify_password(password: str, stored_hash: str | None) -> bool:
+    if not stored_hash:
+        return secrets.compare_digest(
+            password.encode(),
+            os.getenv("ANYCAST_ADMIN_PASSWORD", _DEFAULT_ADMIN_PASSWORD).encode(),
+        )
+    try:
+        algorithm, iterations, salt, expected = stored_hash.split("$")
+        if algorithm != "pbkdf2_sha256" or int(iterations) != 200000:
+            return False
+        actual = hashlib.pbkdf2_hmac(
+            "sha256", password.encode(), bytes.fromhex(salt), int(iterations)
+        )
+        return secrets.compare_digest(actual, bytes.fromhex(expected))
+    except ValueError:
+        return False
+
+
+def verify_admin_password(password: str) -> bool:
+    return _verify_password(password, get_admin_password_hash())
+
+
+def hash_admin_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 200000)
+    return f"pbkdf2_sha256$200000${salt.hex()}${digest.hex()}"
+
+
 def require_admin(
     credentials: Annotated[HTTPBasicCredentials | None, Depends(_security)],
 ) -> None:
-    expected_password = os.getenv("ANYCAST_ADMIN_PASSWORD", _DEFAULT_ADMIN_PASSWORD)
     expected_username = os.getenv("ANYCAST_ADMIN_USERNAME", "admin")
     username = credentials.username if credentials else ""
     password = credentials.password if credentials else ""
     valid = secrets.compare_digest(username.encode(), expected_username.encode())
-    valid &= secrets.compare_digest(password.encode(), expected_password.encode())
+    valid &= verify_admin_password(password)
     if not valid:
         raise HTTPException(
             status_code=401,
@@ -81,4 +150,6 @@ def check_admin_request_origin(request: Request) -> None:
 
 
 def uses_default_admin_password() -> bool:
-    return "ANYCAST_ADMIN_PASSWORD" not in os.environ
+    return get_admin_password_hash() is None and os.getenv(
+        "ANYCAST_ADMIN_PASSWORD", _DEFAULT_ADMIN_PASSWORD
+    ) in ("", _DEFAULT_ADMIN_PASSWORD)
