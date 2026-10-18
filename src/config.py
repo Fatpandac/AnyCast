@@ -90,13 +90,15 @@ def get_config() -> Config:
 
 def _write_config(config: dict) -> None:
     path = Path(__get_config_file())
-    temporary = path.with_suffix(f"{path.suffix}.tmp")
-    # shortcut: PyYAML 不保留手写注释；需要保留注释时再换 round-trip YAML 库。
-    temporary.write_text(
-        yaml.safe_dump(config, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            # shortcut: PyYAML 不保留手写注释；需要保留注释时再换 round-trip YAML 库。
+            yaml.safe_dump(config, f, allow_unicode=True, sort_keys=False)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def get_admin_password_hash() -> str | None:
@@ -129,6 +131,10 @@ def get_admin_settings() -> dict:
             "cookies_file": youtube.get("cookies_file") or "",
             "cookies_from_browser": youtube.get("cookies_from_browser") or "",
         },
+        "admin": {
+            "passkey_origin": (config.get("admin") or {}).get("passkey_origin") or "",
+            "passkey_count": len((config.get("admin") or {}).get("passkeys") or []),
+        },
     }
 
 
@@ -145,6 +151,58 @@ def update_admin_settings(server: ServerConfig, youtube: YouTubeConfig) -> None:
             **{key: value for key, value in youtube.items() if value},
         }
         _write_config(config)
+
+
+def get_passkey_config() -> dict:
+    with open(__get_config_file(), "r", encoding="utf-8") as f:
+        return (yaml.safe_load(f).get("admin") or {}).copy()
+
+
+def update_passkey_origin(origin: str) -> None:
+    with _config_lock:
+        with open(__get_config_file(), "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        admin = dict(config.get("admin") or {})
+        if admin.get("passkey_origin", "") != origin:
+            # A credential is bound to its RP ID; never keep it after changing the domain.
+            admin.pop("passkeys", None)
+            admin.pop("passkey_secret", None)
+        admin["passkey_origin"] = origin
+        config["admin"] = admin
+        _write_config(config)
+
+
+def add_passkey(origin: str, credential: dict) -> None:
+    with _config_lock:
+        with open(__get_config_file(), "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        admin = dict(config.get("admin") or {})
+        if admin.get("passkey_origin") != origin:
+            raise ValueError("域名已更改，请重新开始注册")
+        keys = list(admin.get("passkeys") or [])
+        if any(item["id"] == credential["id"] for item in keys):
+            raise ValueError("该 Passkey 已注册")
+        admin["passkeys"] = [*keys, credential]
+        admin.setdefault("passkey_secret", os.urandom(32).hex())
+        config["admin"] = admin
+        _write_config(config)
+
+
+def update_passkey_counter(
+    origin: str, credential_id: str, old_count: int, new_count: int
+) -> None:
+    with _config_lock:
+        with open(__get_config_file(), "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        admin = config.get("admin") or {}
+        if admin.get("passkey_origin") != origin:
+            raise ValueError("域名已更改")
+        for key in admin.get("passkeys") or []:
+            if key["id"] == credential_id and key["sign_count"] == old_count:
+                key["sign_count"] = new_count
+                _write_config(config)
+                return
+        raise ValueError("Passkey 已失效，请重试")
 
 
 def get_admin_cookie_file() -> dict:

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import { Dashboard } from "@/Dashboard"
 import { PodcastDetail } from "@/PodcastDetail"
 import { SettingsPage } from "@/Settings"
+import { Login } from "@/Login"
 
 function podcastFromPath(pathname: string): string | null {
   const match = pathname.match(/^\/admin\/podcasts\/([^/]+)\/?$/)
@@ -43,7 +44,9 @@ export function App() {
     setSettingsOpen(false)
   }
 
-  return settingsOpen ? (
+  return window.location.pathname === "/admin/login" ? (
+    <Login />
+  ) : settingsOpen ? (
     <SettingsPage goBack={goBack} />
   ) : podcastName ? (
     <PodcastDetail name={podcastName} goBack={goBack} />

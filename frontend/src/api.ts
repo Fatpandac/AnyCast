@@ -23,7 +23,7 @@ export type Episode = {
 
 export type PodcastInput = Omit<Podcast, "episode_count" | "yt_dlp_options">
 
-async function request<T>(url: string, options?: RequestInit): Promise<T> {
+export async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     credentials: "same-origin",
     ...options,
@@ -48,6 +48,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 export type Settings = {
   server: { host: string; port: number }
   youtube: { cookies_file: string; cookies_from_browser: string }
+  admin?: { passkey_origin: string; passkey_count: number }
 }
 
 export function getSettings() {
@@ -61,6 +62,12 @@ export function saveSettings(settings: Settings) {
 export function changeAdminPassword(current_password: string, new_password: string) {
   return request<{ status: string }>("/api/admin/settings/password", {
     method: "PUT", body: JSON.stringify({ current_password, new_password }),
+  })
+}
+
+export function savePasskeyOrigin(origin: string) {
+  return request<{ passkey_origin: string; passkey_count: number }>("/api/admin/settings/passkey-origin", {
+    method: "PUT", body: JSON.stringify({ origin }),
   })
 }
 

@@ -7,14 +7,16 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from pathlib import Path
 
-from fastapi import Depends
-from fastapi import FastAPI
+from pydantic import BaseModel, Field, field_validator
+from fastapi.security import HTTPBasicCredentials
+from typing import Annotated
+from fastapi import Depends, FastAPI
 from fastapi import HTTPException
 from fastapi import Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from feedgen.feed import FeedGenerator
@@ -28,6 +30,7 @@ from src.admin import (
     require_admin,
     uses_default_admin_password,
     verify_admin_password,
+    _security,
 )
 from src.config import (
     add_podcast,
@@ -35,6 +38,8 @@ from src.config import (
     get_admin_settings,
     get_admin_cookie_file,
     get_admin_password_hash,
+    get_passkey_config,
+    update_passkey_origin,
     get_config,
     remove_podcast,
     update_admin_cookie_file,
@@ -42,6 +47,7 @@ from src.config import (
     update_admin_settings,
     update_podcast,
 )
+from src import passkeys
 from src.database import (
     count_episodes_by_podcast,
     get_episodes,
@@ -81,7 +87,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -248,9 +254,124 @@ async def admin_remove_podcast(
     return {"status": "removed"}
 
 
+class PasskeyOriginPayload(BaseModel):
+    origin: str
+
+    @field_validator("origin")
+    @classmethod
+    def validate_origin(cls, value: str) -> str:
+        if not value:
+            return value
+        parsed = urlsplit(value.rstrip("/"))
+        host = parsed.hostname or ""
+        if (
+            parsed.scheme != "https"
+            or not host
+            or "." not in host
+            or parsed.username
+            or parsed.password
+            or ":" in parsed.netloc
+            or parsed.path not in ("", "/")
+            or parsed.query
+            or parsed.fragment
+            or value.count("/") > 3
+            or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789.-" for c in host)
+        ):
+            raise ValueError("请输入完整的 HTTPS 域名，不包含路径或参数")
+        return f"https://{host}"
+
+
+class PasskeyCredentialPayload(BaseModel):
+    challenge: str = Field(min_length=32, max_length=256)
+    credential: dict
+
+
+@app.put("/api/admin/settings/passkey-origin")
+async def admin_passkey_origin(
+    payload: PasskeyOriginPayload,
+    request: Request,
+    _auth: None = Depends(require_admin),
+):
+    check_admin_request_origin(request)
+    update_passkey_origin(payload.origin)
+    return get_admin_settings()["admin"]
+
+
+def _require_strong_password() -> None:
+    if uses_default_admin_password():
+        raise HTTPException(403, "请先修改默认管理员密码，再注册 Passkey")
+
+
+@app.post("/api/admin/passkeys/register/options")
+async def admin_passkey_registration_options(
+    request: Request, _auth: None = Depends(require_admin)
+):
+    _require_strong_password()
+    return passkeys.registration_options(request)
+
+
+@app.post("/api/admin/passkeys/register/verify")
+async def admin_passkey_registration(
+    payload: PasskeyCredentialPayload,
+    request: Request,
+    _auth: None = Depends(require_admin),
+):
+    _require_strong_password()
+    passkeys.register(request, payload.challenge, payload.credential)
+    return get_admin_settings()["admin"]
+
+
+@app.post("/api/admin/passkeys/login/options")
+async def admin_passkey_auth_options(request: Request):
+    return passkeys.authentication_options(request)
+
+
+@app.post("/api/admin/passkeys/login/verify")
+async def admin_passkey_auth(
+    payload: PasskeyCredentialPayload, request: Request, response: Response
+):
+    session = passkeys.authenticate(request, payload.challenge, payload.credential)
+    response.set_cookie(
+        passkeys.COOKIE,
+        session,
+        max_age=12 * 3600,
+        secure=True,
+        httponly=True,
+        samesite="lax",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok"}
+
+
+@app.get("/admin/basic", include_in_schema=False)
+async def admin_basic(
+    request: Request,
+    credentials: Annotated[HTTPBasicCredentials | None, Depends(_security)],
+):
+    try:
+        require_admin(request, credentials)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            raise HTTPException(
+                401, "请使用管理员密码登录", headers={"WWW-Authenticate": "Basic"}
+            ) from exc
+        raise
+    return RedirectResponse("/admin", status_code=303)
+
+
 @app.get("/admin", include_in_schema=False)
 @app.get("/admin/{path:path}", include_in_schema=False)
-async def admin_spa(_auth: None = Depends(require_admin)):
+async def admin_spa(
+    request: Request,
+    credentials: Annotated[HTTPBasicCredentials | None, Depends(_security)],
+):
+    if request.url.path != "/admin/login":
+        try:
+            require_admin(request, credentials)
+        except HTTPException as exc:
+            if exc.status_code != 401 or not get_passkey_config().get("passkeys"):
+                raise
+            return RedirectResponse("/admin/login", status_code=303)
     if not _admin_index.exists():
         raise HTTPException(
             status_code=503,

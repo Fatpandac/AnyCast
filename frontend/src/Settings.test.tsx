@@ -13,6 +13,53 @@ afterEach(() => {
   window.history.replaceState({}, "", "/admin")
 })
 
+it("configures HTTPS domain and offers passkey registration only on that domain", async () => {
+  window.history.replaceState({}, "", "/admin/settings")
+  const fetch = vi.fn((url: string, options?: RequestInit) => Promise.resolve({ ok: true, json: () => Promise.resolve(
+    url.endsWith("/passkey-origin") ? { passkey_origin: "https://example.com", passkey_count: 0 } : { ...settings, admin: { passkey_origin: "", passkey_count: 0 } },
+  ) } as Response))
+  vi.stubGlobal("fetch", fetch)
+  render(<App />)
+  fireEvent.change(await screen.findByLabelText("Passkey 登录域名"), { target: { value: "https://example.com" } })
+  fireEvent.click(screen.getByRole("button", { name: "保存登录域名" }))
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/admin/settings/passkey-origin", expect.objectContaining({
+    method: "PUT", body: JSON.stringify({ origin: "https://example.com" }),
+  })))
+  expect(screen.queryByRole("button", { name: "注册 Passkey" })).not.toBeInTheDocument()
+})
+
+it("offers registration and login links on the configured origin after enrollment", async () => {
+  window.history.replaceState({}, "", "/admin/settings")
+  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({
+    ...settings, admin: { passkey_origin: window.location.origin, passkey_count: 1 },
+  }) } as Response)))
+  render(<App />)
+  expect(await screen.findByRole("button", { name: "注册 Passkey" })).toBeInTheDocument()
+  expect(screen.getByRole("link", { name: "使用 Passkey 登录" })).toHaveAttribute("href", "/admin/login")
+})
+
+it("does not remove registered passkeys without confirmation", async () => {
+  window.history.replaceState({}, "", "/admin/settings")
+  const fetch = vi.fn((url: string) => Promise.resolve({ ok: true, json: () => Promise.resolve(
+    url.endsWith("/settings") ? { ...settings, admin: { passkey_origin: "https://example.com", passkey_count: 2 } } : settings,
+  ) } as Response))
+  vi.stubGlobal("fetch", fetch)
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false)
+  render(<App />)
+  fireEvent.change(await screen.findByLabelText("Passkey 登录域名"), { target: { value: "https://new.example.com" } })
+  fireEvent.click(screen.getByRole("button", { name: "保存登录域名" }))
+  expect(confirm).toHaveBeenCalled()
+  expect(fetch).not.toHaveBeenCalledWith("/api/admin/settings/passkey-origin", expect.anything())
+  confirm.mockRestore()
+})
+
+it("shows a password fallback on the passkey login page", () => {
+  window.history.replaceState({}, "", "/admin/login")
+  render(<App />)
+  expect(screen.getByRole("button", { name: "使用 Passkey 登录" })).toBeInTheDocument()
+  expect(screen.getByRole("link", { name: "使用密码登录" })).toHaveAttribute("href", "/admin/basic")
+})
+
 it("opens settings, saves server and YouTube settings, and keeps the restart notice", async () => {
   const fetch = vi.fn((url: string | URL | Request, options?: RequestInit) =>
     Promise.resolve({ ok: true, json: () => Promise.resolve(options?.method === "PUT" ? settings :

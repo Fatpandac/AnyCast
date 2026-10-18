@@ -31,7 +31,7 @@ pnpm test
 pnpm build     # 生产文件输出到 src/admin_static
 ```
 
-管理后台使用 HTTP Basic Authentication。部署到公网时必须先替换默认密码，并放在 HTTPS 反向代理后，不要通过明文 HTTP 传输密码。使用默认密码时，后台会显示警告；虽然也能编辑 Cookie 文件，但已知默认密码的任何人都可能读取其中的敏感凭据。
+管理后台支持 HTTP Basic 密码登录，也可在「设置 → Passkey 登录」填写并保存自己的 HTTPS 域名（例如 `https://example.com`），再用该域名打开后台注册 Passkey。注册前必须修改默认管理员密码。注册第一个 Passkey 后，通过 `/admin/login` 可使用设备验证登录；密码登录始终保留为恢复方式。更换或清空域名会移除已有 Passkey 并使 Passkey 会话失效，需要重新注册。反向代理必须保留原始 `Host` 头，且 Passkey 的注册及登录请求必须来自配置的 HTTPS 域名；多进程部署需要共享挑战存储（当前仅支持单 worker）。请妥善保管 `config.yaml`（其中保存 Passkey 公钥和会话签名密钥）。部署到公网时必须先替换默认密码，并放在 HTTPS 反向代理后，不要通过明文 HTTP 传输密码。使用默认密码时，后台会显示警告；虽然也能编辑 Cookie 文件，但已知默认密码的任何人都可能读取其中的敏感凭据。
 
 ## API
 

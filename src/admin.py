@@ -5,7 +5,7 @@ import os
 import hashlib
 import secrets
 from typing import Annotated, Literal
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import Depends, HTTPException, Request
@@ -13,6 +13,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.config import DEFAULT_PAGE_SIZE, Podcast, get_admin_password_hash
+from src.passkeys import session_valid
 
 
 _security = HTTPBasic(auto_error=False)
@@ -128,24 +129,38 @@ def hash_admin_password(password: str) -> str:
 
 
 def require_admin(
+    request: Request,
     credentials: Annotated[HTTPBasicCredentials | None, Depends(_security)],
 ) -> None:
+    from src.config import get_passkey_config
+
+    if session_valid(request):
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            origin = get_passkey_config().get("passkey_origin")
+            if request.headers.get("origin") != origin:
+                raise HTTPException(status_code=403, detail="拒绝跨站管理请求")
+        return
     expected_username = os.getenv("ANYCAST_ADMIN_USERNAME", "admin")
     username = credentials.username if credentials else ""
     password = credentials.password if credentials else ""
     valid = secrets.compare_digest(username.encode(), expected_username.encode())
     valid &= verify_admin_password(password)
     if not valid:
+        headers = (
+            {"WWW-Authenticate": "Basic"}
+            if credentials or not get_passkey_config().get("passkeys")
+            else {}
+        )
         raise HTTPException(
             status_code=401,
             detail="用户名或密码错误",
-            headers={"WWW-Authenticate": "Basic"},
+            headers=headers,
         )
 
 
 def check_admin_request_origin(request: Request) -> None:
     origin = request.headers.get("origin")
-    if origin and urlparse(origin).netloc != request.url.netloc:
+    if origin and urlsplit(origin).netloc != request.headers.get("host"):
         raise HTTPException(status_code=403, detail="拒绝跨站管理请求")
 
 

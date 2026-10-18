@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useState } from "react"
 import { ArrowLeft, LoaderCircle, Save } from "lucide-react"
 
-import { changeAdminPassword, getCookieFile, getSettings, saveCookieFile, saveSettings, type Settings } from "@/api"
+import { changeAdminPassword, getCookieFile, getSettings, saveCookieFile, savePasskeyOrigin, saveSettings, type Settings } from "@/api"
+import { registerPasskey } from "@/passkeys"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
@@ -30,6 +31,11 @@ export function SettingsPage({ goBack }: { goBack: () => void }) {
   const [passwordSaved, setPasswordSaved] = useState(false)
   const [passwordSaving, setPasswordSaving] = useState(false)
   const [passwordOpen, setPasswordOpen] = useState(false)
+  const [passkeyOrigin, setPasskeyOrigin] = useState("")
+  const [configuredOrigin, setConfiguredOrigin] = useState("")
+  const [passkeyCount, setPasskeyCount] = useState(0)
+  const [passkeyError, setPasskeyError] = useState("")
+  const [passkeyBusy, setPasskeyBusy] = useState(false)
 
   function togglePasswordDialog(open: boolean) {
     if (passwordSaving) return
@@ -81,6 +87,9 @@ export function SettingsPage({ goBack }: { goBack: () => void }) {
   useEffect(() => {
     void getSettings().then((data) => {
       setSettings(data)
+      setPasskeyOrigin(data.admin?.passkey_origin || "")
+      setConfiguredOrigin(data.admin?.passkey_origin || "")
+      setPasskeyCount(data.admin?.passkey_count || 0)
       setCookieFilePath(data.youtube.cookies_file)
       setSource(data.youtube.cookies_file ? "file" : data.youtube.cookies_from_browser ? "browser" : "none")
     }).catch((reason) => setError(reason instanceof Error ? reason.message : "加载失败"))
@@ -107,6 +116,36 @@ export function SettingsPage({ goBack }: { goBack: () => void }) {
       setError(reason instanceof Error ? reason.message : "保存失败")
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function saveOrigin() {
+    const origin = passkeyOrigin.trim()
+    if (passkeyCount && origin !== configuredOrigin && !window.confirm("更换域名会删除已注册的 Passkey 并使 Passkey 登录失效，确定继续吗？")) return
+    setPasskeyError("")
+    setPasskeyBusy(true)
+    try {
+      const result = await savePasskeyOrigin(origin)
+      setPasskeyOrigin(result.passkey_origin)
+      setConfiguredOrigin(result.passkey_origin)
+      setPasskeyCount(result.passkey_count)
+    } catch (reason) {
+      setPasskeyError(reason instanceof Error ? reason.message : "保存域名失败")
+    } finally {
+      setPasskeyBusy(false)
+    }
+  }
+
+  async function enrollPasskey() {
+    setPasskeyError("")
+    setPasskeyBusy(true)
+    try {
+      const result = await registerPasskey()
+      setPasskeyCount(result.passkey_count)
+    } catch (reason) {
+      setPasskeyError(reason instanceof Error ? reason.message : "注册 Passkey 失败")
+    } finally {
+      setPasskeyBusy(false)
     }
   }
 
@@ -211,6 +250,17 @@ export function SettingsPage({ goBack }: { goBack: () => void }) {
                 </form>
               </DialogContent>
             </Dialog>
+          </div>
+          <div className="grid gap-3 border-t py-4">
+            <div><p className="font-medium">Passkey 登录</p><p className="text-sm text-muted-foreground">先保存此后台的 HTTPS 域名，再通过该域名打开本页面注册。密码登录仍可用于恢复。</p></div>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="grid min-w-0 flex-1 gap-2"><Label htmlFor="passkey-origin">Passkey 登录域名</Label><Input id="passkey-origin" type="url" placeholder="https://example.com" value={passkeyOrigin} onChange={(event) => setPasskeyOrigin(event.target.value)} /></div>
+              <Button type="button" variant="outline" disabled={passkeyBusy} onClick={() => void saveOrigin()}>保存登录域名</Button>
+            </div>
+            {configuredOrigin && passkeyOrigin === configuredOrigin && window.location.origin === configuredOrigin &&
+              <div className="flex flex-wrap items-center gap-3"><Button type="button" variant="outline" disabled={passkeyBusy || !("credentials" in navigator)} onClick={() => void enrollPasskey()}>{passkeyBusy && <LoaderCircle className="animate-spin" />}注册 Passkey</Button><span className="text-sm text-muted-foreground">已注册 {passkeyCount} 个</span>{passkeyCount > 0 && <a href="/admin/login" className="text-sm underline">使用 Passkey 登录</a>}</div>}
+            {configuredOrigin && window.location.origin !== configuredOrigin && <p className="text-sm text-muted-foreground">请用 {configuredOrigin}/admin/settings 访问后注册；反向代理需保留 Host 请求头。</p>}
+            {passkeyError && <Alert role="alert" className="border-destructive/40 bg-destructive/5 text-destructive"><AlertDescription>{passkeyError}</AlertDescription></Alert>}
           </div>
         </section>
       </main>

@@ -17,6 +17,256 @@ def _podcast(name: str = "weekly") -> dict:
     }
 
 
+def test_passkey_registration_requires_auth_and_origin(monkeypatch, tmp_path):
+    import yaml
+    from src import config
+
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({"podcasts": [], "server": {}, "youtube": {}}))
+    monkeypatch.setattr(config, "__get_config_file", lambda: str(path))
+    monkeypatch.setenv("ANYCAST_ADMIN_PASSWORD", "secret")
+    client = TestClient(main.app)
+    assert client.post("/api/admin/passkeys/register/options").status_code == 401
+    monkeypatch.setenv("ANYCAST_ADMIN_PASSWORD", "adminadmin")
+    assert (
+        client.post(
+            "/api/admin/passkeys/register/options",
+            auth=("admin", "adminadmin"),
+            headers={"Origin": "https://example.com", "Host": "example.com"},
+        ).status_code
+        == 403
+    )
+    monkeypatch.setenv("ANYCAST_ADMIN_PASSWORD", "secret")
+    assert (
+        client.put(
+            "/api/admin/settings/passkey-origin",
+            auth=("admin", "secret"),
+            json={"origin": "http://example.com"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.put(
+            "/api/admin/settings/passkey-origin",
+            auth=("admin", "secret"),
+            json={"origin": "https://example.com/path"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.put(
+            "/api/admin/settings/passkey-origin",
+            auth=("admin", "secret"),
+            json={"origin": "https://example.com"},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/admin/passkeys/register/options",
+            auth=("admin", "secret"),
+            headers={"Origin": "https://evil.example"},
+        ).status_code
+        == 403
+    )
+    response = client.post(
+        "/api/admin/passkeys/register/options",
+        auth=("admin", "secret"),
+        headers={"Origin": "https://example.com", "Host": "example.com"},
+    )
+    assert response.status_code == 200
+    assert response.json()["rp"]["id"] == "example.com"
+    assert response.json()["authenticatorSelection"]["residentKey"] == "required"
+    assert (
+        client.get("/api/admin/settings", auth=("admin", "secret")).json()["admin"][
+            "passkey_origin"
+        ]
+        == "https://example.com"
+    )
+    assert yaml.safe_load(path.read_text())["podcasts"] == []
+    assert client.put(
+        "/api/admin/settings/passkey-origin",
+        auth=("admin", "secret"),
+        json={"origin": ""},
+    ).json() == {"passkey_origin": "", "passkey_count": 0}
+
+
+def test_passkey_registration_persists_credential_and_origin_change_revokes_it(
+    monkeypatch, tmp_path
+):
+    import yaml
+    from types import SimpleNamespace
+    from src import config, passkeys
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "podcasts": [{"name": "existing"}],
+                "admin": {"passkey_origin": "https://example.com"},
+            }
+        )
+    )
+    monkeypatch.setattr(config, "__get_config_file", lambda: str(path))
+    monkeypatch.setenv("ANYCAST_ADMIN_PASSWORD", "secret")
+    monkeypatch.setattr(
+        passkeys,
+        "verify_registration_response",
+        lambda **kw: SimpleNamespace(
+            credential_id=b"cred-id",
+            credential_public_key=b"public-key",
+            sign_count=0,
+        ),
+    )
+    client = TestClient(main.app, base_url="https://example.com")
+    headers = {"Origin": "https://example.com"}
+    options = client.post(
+        "/api/admin/passkeys/register/options",
+        auth=("admin", "secret"),
+        headers=headers,
+    ).json()
+    assert (
+        client.post(
+            "/api/admin/passkeys/register/verify",
+            auth=("admin", "secret"),
+            headers=headers,
+            json={
+                "challenge": options["challenge"],
+                "credential": {"id": "Y3JlZC1pZA"},
+            },
+        ).json()["passkey_count"]
+        == 1
+    )
+    saved = yaml.safe_load(path.read_text())
+    assert saved["podcasts"] == [{"name": "existing"}]
+    assert saved["admin"]["passkeys"][0]["id"] == "Y3JlZC1pZA"
+    assert "passkey_secret" in saved["admin"]
+    assert path.stat().st_mode & 0o077 == 0
+    assert (
+        client.post(
+            "/api/admin/passkeys/register/verify",
+            auth=("admin", "secret"),
+            headers=headers,
+            json={
+                "challenge": options["challenge"],
+                "credential": {"id": "Y3JlZC1pZA"},
+            },
+        ).status_code
+        == 400
+    )
+    assert (
+        client.put(
+            "/api/admin/settings/passkey-origin",
+            auth=("admin", "secret"),
+            headers=headers,
+            json={"origin": "https://new.example.com"},
+        ).json()["passkey_count"]
+        == 0
+    )
+    assert "passkeys" not in yaml.safe_load(path.read_text())["admin"]
+
+
+def test_passkey_login_is_single_use_and_session_is_origin_bound(monkeypatch, tmp_path):
+    import yaml
+    from types import SimpleNamespace
+    from src import config, passkeys
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "podcasts": [],
+                "admin": {
+                    "passkey_origin": "https://example.com",
+                    "passkey_secret": "ab" * 32,
+                    "passkeys": [
+                        {"id": "Y3JlZC1pZA", "public_key": "aGVsbG8", "sign_count": 0}
+                    ],
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config, "__get_config_file", lambda: str(path))
+    monkeypatch.setenv("ANYCAST_ADMIN_PASSWORD", "secret")
+    monkeypatch.setattr(
+        passkeys,
+        "verify_authentication_response",
+        lambda **kw: SimpleNamespace(
+            credential_id=b"cred-id", new_sign_count=1, user_verified=True
+        ),
+    )
+    client = TestClient(main.app, base_url="https://example.com")
+    headers = {"Host": "example.com", "Origin": "https://example.com"}
+    assert (
+        client.get(
+            "/admin", headers={"Host": "example.com"}, follow_redirects=False
+        ).headers["location"]
+        == "/admin/login"
+    )
+    assert client.get("/api/admin/settings", headers=headers).status_code == 401
+    assert (
+        client.get("/admin/basic", headers=headers, follow_redirects=False).headers[
+            "www-authenticate"
+        ]
+        == "Basic"
+    )
+    assert (
+        client.get(
+            "/admin/basic",
+            headers=headers,
+            auth=("admin", "secret"),
+            follow_redirects=False,
+        ).status_code
+        == 303
+    )
+    options = client.post("/api/admin/passkeys/login/options", headers=headers).json()
+    assert options["rpId"] == "example.com"
+    response = client.post(
+        "/api/admin/passkeys/login/verify",
+        headers=headers,
+        json={"challenge": options["challenge"], "credential": {"id": "Y3JlZC1pZA"}},
+    )
+    assert response.status_code == 200
+    assert (
+        "Secure" in response.headers["set-cookie"]
+        and "HttpOnly" in response.headers["set-cookie"]
+    )
+    assert client.get("/api/admin/settings", headers=headers).status_code == 200
+    assert (
+        client.post(
+            "/api/admin/passkeys/login/verify",
+            headers=headers,
+            json={
+                "challenge": options["challenge"],
+                "credential": {"id": "Y3JlZC1pZA"},
+            },
+        ).status_code
+        == 400
+    )
+    assert (
+        client.put(
+            "/api/admin/settings",
+            headers={**headers, "Origin": "https://evil.example"},
+            json={},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get("/api/admin/settings", headers={"Host": "evil.example"}).status_code
+        == 401
+    )
+    assert (
+        client.put(
+            "/api/admin/settings/passkey-origin",
+            auth=("admin", "secret"),
+            headers=headers,
+            json={"origin": "https://new.example.com"},
+        ).status_code
+        == 200
+    )
+    assert client.get("/api/admin/settings", headers=headers).status_code == 401
+
+
 def test_admin_spa_is_protected_and_served(monkeypatch):
     monkeypatch.setenv("ANYCAST_ADMIN_PASSWORD", "secret")
     client = TestClient(main.app)
@@ -565,6 +815,7 @@ def test_admin_settings_require_auth_and_validate_input(monkeypatch, tmp_path):
     assert client.get("/api/admin/settings", auth=("admin", "secret")).json() == {
         "server": {"host": "0.0.0.0", "port": 8001},
         "youtube": {"cookies_file": "", "cookies_from_browser": ""},
+        "admin": {"passkey_origin": "", "passkey_count": 0},
     }
     invalid = client.put(
         "/api/admin/settings",
@@ -600,7 +851,10 @@ def test_admin_settings_save_without_overwriting_other_config(monkeypatch, tmp_p
     response = client.put("/api/admin/settings", auth=("admin", "secret"), json=payload)
 
     assert response.status_code == 200
-    assert response.json() == payload
+    assert response.json() == {
+        **payload,
+        "admin": {"passkey_origin": "", "passkey_count": 0},
+    }
     saved = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert saved["podcasts"] == original["podcasts"]
     assert saved["server"] == {**original["server"], **payload["server"]}
