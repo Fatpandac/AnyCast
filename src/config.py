@@ -107,6 +107,25 @@ def add_podcast(podcast: Podcast) -> None:
         _write_config(config)
 
 
+def update_podcast(name: str, podcast: Podcast) -> None:
+    if podcast["name"] != name:
+        raise ValueError("不能修改播客名称")
+    with _config_lock:
+        with open(__get_config_file(), "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        podcasts = config.get("podcasts", [])
+        for index, current in enumerate(podcasts):
+            if current.get("name") == name:
+                podcasts[index] = {
+                    **current,
+                    **podcast,
+                    "yt_dlp_options": current.get("yt_dlp_options") or {},
+                }
+                _write_config(config)
+                return
+        raise ValueError(f"播客 {name} 不存在")
+
+
 def remove_podcast(name: str) -> None:
     with _config_lock:
         with open(__get_config_file(), "r", encoding="utf-8") as f:

@@ -128,6 +128,45 @@ def test_admin_api_adds_podcast_and_syncs_jobs(monkeypatch):
     assert sync_calls == [True]
 
 
+def test_admin_api_updates_podcast_and_syncs_jobs(monkeypatch):
+    updated = {**_podcast(), "url": "https://example.com/updated"}
+    saved = []
+    sync_calls = []
+    monkeypatch.setenv("ANYCAST_ADMIN_PASSWORD", "secret")
+    monkeypatch.setattr(
+        main,
+        "update_podcast",
+        lambda name, podcast: saved.append((name, podcast)),
+    )
+    monkeypatch.setattr(main, "init_database", lambda: None)
+    monkeypatch.setattr(main, "sync_cron_jobs", lambda: sync_calls.append(True))
+    client = TestClient(main.app)
+
+    response = client.put(
+        "/api/admin/podcasts/weekly",
+        auth=("admin", "secret"),
+        json={key: value for key, value in updated.items() if key != "yt_dlp_options"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"podcast": updated}
+    assert saved == [("weekly", updated)]
+    assert sync_calls == [True]
+
+
+def test_admin_api_rejects_renaming_podcast(monkeypatch):
+    monkeypatch.setenv("ANYCAST_ADMIN_PASSWORD", "secret")
+    client = TestClient(main.app)
+
+    response = client.put(
+        "/api/admin/podcasts/weekly",
+        auth=("admin", "secret"),
+        json={**_podcast("renamed"), "yt_dlp_options": {}},
+    )
+
+    assert response.status_code == 400
+
+
 def test_admin_api_rejects_unsafe_podcast_name(monkeypatch):
     monkeypatch.setenv("ANYCAST_ADMIN_PASSWORD", "secret")
     client = TestClient(main.app)

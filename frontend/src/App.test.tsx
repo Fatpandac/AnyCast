@@ -63,6 +63,27 @@ describe("AnyCast admin", () => {
     expect(window.location.pathname).toBe("/admin/podcasts/weekly")
   })
 
+  it("edits a podcast from its list item", async () => {
+    const updated = { ...podcast, url: "https://www.youtube.com/playlist?list=UPDATED" }
+    const fetch = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({ podcasts: [podcast], uses_default_password: false }))
+      .mockImplementationOnce(() => jsonResponse({ podcast: updated }))
+      .mockImplementationOnce(() => jsonResponse({ podcasts: [updated], uses_default_password: false }))
+    vi.stubGlobal("fetch", fetch)
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole("button", { name: "编辑 weekly" }))
+    const dialog = screen.getByRole("dialog", { name: "编辑 weekly" })
+    fireEvent.change(within(dialog).getByLabelText("播放列表地址"), { target: { value: updated.url } })
+    fireEvent.submit(within(dialog).getByRole("button", { name: "保存" }).closest("form")!)
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "编辑 weekly" })).not.toBeInTheDocument())
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/admin/podcasts/weekly", expect.objectContaining({
+      method: "PUT",
+      body: expect.stringContaining(updated.url),
+    }))
+  })
+
   it("opens the add form in a dialog and closes it after adding", async () => {
     const fetch = vi.fn()
       .mockImplementationOnce(() => jsonResponse({ podcasts: [], uses_default_password: false }))

@@ -64,6 +64,13 @@ export function createPodcast(podcast: PodcastInput) {
   })
 }
 
+export function updatePodcast(name: string, podcast: PodcastInput) {
+  return request<{ podcast: Podcast }>(
+    `/api/admin/podcasts/${encodeURIComponent(name)}`,
+    { method: "PUT", body: JSON.stringify(podcast) },
+  )
+}
+
 export function deletePodcast(name: string) {
   return request<{ status: string }>(
     `/api/admin/podcasts/${encodeURIComponent(name)}`,

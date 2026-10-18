@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react"
-import { AlertTriangle, ChevronDown, ExternalLink, LoaderCircle, Plus, Radio, Trash2 } from "lucide-react"
+import { AlertTriangle, ChevronDown, ExternalLink, LoaderCircle, Pencil, Plus, Radio, Trash2 } from "lucide-react"
 
-import { createPodcast, deletePodcast, listPodcasts, type Podcast, type PodcastInput } from "@/api"
+import { createPodcast, deletePodcast, listPodcasts, updatePodcast, type Podcast, type PodcastInput } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -21,6 +21,7 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
   const [usesDefaultPassword, setUsesDefaultPassword] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [editingPodcast, setEditingPodcast] = useState<Podcast | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [frequency, setFrequency] = useState<Frequency>("hourly")
@@ -83,6 +84,35 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
     }
   }
 
+  async function edit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!editingPodcast) return
+    const values = new FormData(event.currentTarget)
+    const keepLatest = String(values.get("keep_latest") || "")
+    const podcast: PodcastInput = {
+      name: editingPodcast.name,
+      url: String(values.get("url") || "").trim(),
+      update_period_cron: String(values.get("update_period_cron") || "").trim(),
+      keep_latest: keepLatest ? Number(keepLatest) : null,
+      page_size: Number(values.get("page_size") || 20),
+      sort_by: values.get("sort_by") as PodcastInput["sort_by"],
+      sort_order: values.get("sort_order") as PodcastInput["sort_order"],
+    }
+
+    setSaving(true)
+    setMessage("")
+    try {
+      await updatePodcast(editingPodcast.name, podcast)
+      setEditingPodcast(null)
+      setMessage("播客配置已更新，定时任务已生效。")
+      await load()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "更新失败")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function remove(name: string) {
     if (!window.confirm(`移除 ${name}？下载文件和历史记录会保留。`)) return
     try {
@@ -119,7 +149,7 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
             <AlertDescription>请立即设置 ANYCAST_ADMIN_PASSWORD 替换密码。</AlertDescription>
           </Alert>
         )}
-        {error && !addOpen && <Alert className="border-destructive/40 bg-destructive/5 text-destructive"><AlertTitle>操作失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+        {error && !addOpen && !editingPodcast && <Alert className="border-destructive/40 bg-destructive/5 text-destructive"><AlertTitle>操作失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
         {message && <Alert className="border-emerald-300 bg-emerald-50 text-emerald-950"><AlertDescription>{message}</AlertDescription></Alert>}
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -176,6 +206,7 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
                       <TableCell>{podcast.keep_latest ?? "全部"}</TableCell>
                       <TableCell onClick={(event) => event.stopPropagation()}>
                         <div className="flex justify-end gap-1">
+                          <Button size="sm" variant="ghost" aria-label={`编辑 ${podcast.name}`} onClick={() => { setError(""); setEditingPodcast(podcast) }}><Pencil />编辑</Button>
                           <Button asChild size="sm" variant="ghost"><a href={`/rss/${encodeURIComponent(podcast.name)}`} target="_blank" rel="noreferrer"><ExternalLink />RSS</a></Button>
                           <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => void remove(podcast.name)}><Trash2 />移除</Button>
                         </div>
@@ -233,6 +264,28 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
               <div className="flex justify-end"><Button type="submit" disabled={saving || !validSchedule}>{saving ? <LoaderCircle className="animate-spin" /> : <Plus />}添加播客</Button></div>
             </form>
           </DialogContent>
+        </Dialog>
+        <Dialog open={Boolean(editingPodcast)} onOpenChange={(open) => { if (!open && !saving) { setEditingPodcast(null); setError("") } }}>
+          {editingPodcast && (
+            <DialogContent>
+              <DialogHeader><DialogTitle>编辑 {editingPodcast.name}</DialogTitle><DialogDescription>播客名称不可修改。</DialogDescription></DialogHeader>
+              {error && <Alert className="border-destructive/40 bg-destructive/5 text-destructive"><AlertTitle>操作失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+              <form className="grid gap-5" onSubmit={edit}>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field className="sm:col-span-2" label="播放列表地址" htmlFor="edit-url"><Input id="edit-url" name="url" type="url" required defaultValue={editingPodcast.url} /></Field>
+                  <Field className="sm:col-span-2" label="更新计划（Cron）" htmlFor="edit-cron"><Input id="edit-cron" name="update_period_cron" required defaultValue={editingPodcast.update_period_cron} /></Field>
+                  <Field label="保留最新集数" htmlFor="edit-keep"><Input id="edit-keep" name="keep_latest" type="number" min={1} defaultValue={editingPodcast.keep_latest ?? ""} placeholder="留空则不清理" /></Field>
+                  <Field label="每次扫描数量" htmlFor="edit-page-size"><Input id="edit-page-size" name="page_size" type="number" min={1} defaultValue={editingPodcast.page_size} /></Field>
+                  <Field label="排序字段" htmlFor="edit-sort-by"><NativeSelect id="edit-sort-by" name="sort_by" defaultValue={editingPodcast.sort_by}><option value="date">发布时间</option><option value="title">标题</option></NativeSelect></Field>
+                  <Field label="播放列表顺序" htmlFor="edit-sort-order"><NativeSelect id="edit-sort-order" name="sort_order" defaultValue={editingPodcast.sort_order}><option value="desc">新到旧</option><option value="asc">旧到新</option></NativeSelect></Field>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="outline" disabled={saving} onClick={() => { setEditingPodcast(null); setError("") }}>取消</Button>
+                  <Button type="submit" disabled={saving}>{saving ? <LoaderCircle className="animate-spin" /> : <Pencil />}保存</Button>
+                </div>
+              </form>
+            </DialogContent>
+          )}
         </Dialog>
       </main>
     </>

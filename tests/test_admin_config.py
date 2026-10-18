@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
+from typing import cast
 
 import yaml
 
@@ -51,6 +52,25 @@ def test_sync_cron_jobs_matches_current_config(monkeypatch):
 
     assert scheduler.added == [("new", "new")]
     assert scheduler.removed == ["old"]
+
+
+def test_update_podcast_preserves_options_and_other_config(monkeypatch, tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    existing = _podcast()
+    existing["yt_dlp_options"] = {"cookiefile": "/tmp/cookies.txt"}
+    config_path.write_text(
+        yaml.safe_dump({"server": {"port": 9000}, "podcasts": [existing]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "__get_config_file", lambda: str(config_path))
+    updated = cast(config.Podcast, {**_podcast(), "url": "https://example.com/updated"})
+
+    config.update_podcast("weekly", updated)
+
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved["server"] == {"port": 9000}
+    assert saved["podcasts"][0]["url"] == "https://example.com/updated"
+    assert saved["podcasts"][0]["yt_dlp_options"] == {"cookiefile": "/tmp/cookies.txt"}
 
 
 def test_add_and_remove_podcast_preserves_other_config(monkeypatch, tmp_path: Path):

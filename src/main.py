@@ -24,7 +24,13 @@ from src.admin import (
     require_admin,
     uses_default_admin_password,
 )
-from src.config import add_podcast, check_config_file, get_config, remove_podcast
+from src.config import (
+    add_podcast,
+    check_config_file,
+    get_config,
+    remove_podcast,
+    update_podcast,
+)
 from src.database import (
     count_episodes_by_podcast,
     get_episodes,
@@ -108,6 +114,26 @@ async def admin_add_podcast(
         add_podcast(podcast)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    init_database()
+    sync_cron_jobs()
+    return {"podcast": podcast}
+
+
+@app.put("/api/admin/podcasts/{name}")
+async def admin_update_podcast(
+    name: str,
+    payload: PodcastPayload,
+    request: Request,
+    _auth: None = Depends(require_admin),
+):
+    check_admin_request_origin(request)
+    if payload.name != name:
+        raise HTTPException(status_code=400, detail="不能修改播客名称")
+    podcast = payload.to_podcast()
+    try:
+        update_podcast(name, podcast)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     init_database()
     sync_cron_jobs()
     return {"podcast": podcast}
