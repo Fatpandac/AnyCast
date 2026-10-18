@@ -75,6 +75,7 @@ describe("AnyCast admin", () => {
     expect(screen.getByText("完整内容简介")).toBeInTheDocument()
     expect(screen.getByText("episode one.m4a")).toBeInTheDocument()
     expect(screen.getByText("共 1 集")).toBeInTheDocument()
+    expect(document.querySelector('img[src="https://img.example/cover.jpg"]')).toHaveAttribute("referrerpolicy", "no-referrer")
     expect(screen.getByRole("link", { name: "查看原内容" })).toHaveAttribute(
       "href",
       "https://www.youtube.com/watch?v=ep-1",

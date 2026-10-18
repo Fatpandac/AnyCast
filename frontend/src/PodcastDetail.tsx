@@ -58,7 +58,7 @@ function EpisodeCard({ podcastName, episode }: { podcastName: string; episode: E
     <Card className="overflow-hidden">
       <CardContent className="grid gap-5 p-4 sm:grid-cols-[180px_minmax(0,1fr)] sm:p-5">
         {coverUrl ? (
-          <img className="aspect-video w-full rounded-lg bg-muted object-cover sm:w-[180px]" src={coverUrl} alt="" loading="lazy" />
+          <img className="aspect-video w-full rounded-lg bg-muted object-cover sm:w-[180px]" src={coverUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />
         ) : (
           <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-muted text-muted-foreground sm:w-[180px]"><FileAudio className="size-8" /></div>
         )}
