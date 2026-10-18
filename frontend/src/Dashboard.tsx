@@ -110,7 +110,7 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
         <Card>
           <CardHeader>
             <CardTitle>播客</CardTitle>
-            <CardDescription>点击播客名称查看下载记录和内容详情。</CardDescription>
+            <CardDescription>点击播客查看下载记录和内容详情。</CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? (
@@ -122,15 +122,27 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
                 <TableHeader><TableRow><TableHead>名称 / 地址</TableHead><TableHead>已下载</TableHead><TableHead>更新计划</TableHead><TableHead>保留</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {podcasts.map((podcast) => (
-                    <TableRow key={podcast.name}>
+                    <TableRow
+                      key={podcast.name}
+                      className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      tabIndex={0}
+                      aria-label={`查看 ${podcast.name}`}
+                      onClick={() => openPodcast(podcast.name)}
+                      onKeyDown={(event) => {
+                        if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+                          event.preventDefault()
+                          openPodcast(podcast.name)
+                        }
+                      }}
+                    >
                       <TableCell className="min-w-64">
-                        <button className="block font-medium text-primary hover:underline" onClick={() => openPodcast(podcast.name)}>{podcast.name}</button>
+                        <span className="block font-medium text-primary">{podcast.name}</span>
                         <span className="block max-w-md truncate text-xs text-muted-foreground" title={podcast.url}>{podcast.url}</span>
                       </TableCell>
                       <TableCell><Badge>{podcast.episode_count || 0} 集</Badge></TableCell>
                       <TableCell><code className="rounded bg-muted px-2 py-1 text-xs">{podcast.update_period_cron}</code></TableCell>
                       <TableCell>{podcast.keep_latest ?? "全部"}</TableCell>
-                      <TableCell>
+                      <TableCell onClick={(event) => event.stopPropagation()}>
                         <div className="flex justify-end gap-1">
                           <Button asChild size="sm" variant="ghost"><a href={`/rss/${encodeURIComponent(podcast.name)}`} target="_blank" rel="noreferrer"><ExternalLink />RSS</a></Button>
                           <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => void remove(podcast.name)}><Trash2 />移除</Button>

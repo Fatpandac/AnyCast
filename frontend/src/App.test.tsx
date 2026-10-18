@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { App } from "./App"
@@ -44,6 +44,20 @@ describe("AnyCast admin", () => {
     expect(screen.getByText("7 集")).toBeInTheDocument()
     expect(screen.getByText(/正在使用默认密码/)).toBeInTheDocument()
     expect(screen.getByRole("heading", { name: "播客" })).toBeInTheDocument()
+  })
+
+  it("opens podcast details when clicking anywhere on its row", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string | URL | Request) =>
+      jsonResponse(String(url).includes("/weekly")
+        ? { podcast, episodes: [] }
+        : { podcasts: [podcast], uses_default_password: false }),
+    ))
+
+    render(<App />)
+    fireEvent.click(await screen.findByText("7 集"))
+
+    expect(await screen.findByText("暂无下载记录。")).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/admin/podcasts/weekly")
   })
 
   it("renders downloaded episode details from a nested URL", async () => {
