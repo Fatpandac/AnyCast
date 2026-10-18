@@ -1,22 +1,32 @@
 import { FormEvent, useCallback, useEffect, useState } from "react"
-import { AlertTriangle, ExternalLink, LoaderCircle, Plus, Radio, Trash2 } from "lucide-react"
+import { AlertTriangle, ChevronDown, ExternalLink, LoaderCircle, Plus, Radio, Trash2 } from "lucide-react"
 
 import { createPodcast, deletePodcast, listPodcasts, type Podcast, type PodcastInput } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { describeSchedule, scheduleCron, type Frequency } from "@/schedule"
 
-const selectClass = "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+const selectClass = "h-9 w-full appearance-none rounded-md border border-input bg-transparent py-1 pl-3 pr-9 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 
 export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void }) {
   const [podcasts, setPodcasts] = useState<Podcast[]>([])
   const [usesDefaultPassword, setUsesDefaultPassword] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [frequency, setFrequency] = useState<Frequency>("hourly")
+  const [scheduleTime, setScheduleTime] = useState("09:00")
+  const [weekday, setWeekday] = useState("0")
+  const [monthDay, setMonthDay] = useState("1")
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
 
@@ -39,13 +49,14 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
 
   async function add(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!validSchedule) return
     const form = event.currentTarget
     const values = new FormData(form)
     const keepLatest = String(values.get("keep_latest") || "")
     const podcast: PodcastInput = {
       name: String(values.get("name") || "").trim(),
       url: String(values.get("url") || "").trim(),
-      update_period_cron: String(values.get("update_period_cron") || "").trim(),
+      update_period_cron: scheduleCron(frequency, scheduleTime, weekday, monthDay),
       keep_latest: keepLatest ? Number(keepLatest) : null,
       page_size: Number(values.get("page_size") || 20),
       sort_by: values.get("sort_by") as PodcastInput["sort_by"],
@@ -57,6 +68,12 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
     try {
       await createPodcast(podcast)
       form.reset()
+      setAddOpen(false)
+      setScheduleOpen(false)
+      setFrequency("hourly")
+      setScheduleTime("09:00")
+      setWeekday("0")
+      setMonthDay("1")
       setMessage("播客已添加，定时任务已生效。")
       await load()
     } catch (reason) {
@@ -78,6 +95,9 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
   }
 
   const episodeCount = podcasts.reduce((sum, item) => sum + (item.episode_count || 0), 0)
+  const validSchedule = (frequency === "hourly" || frequency === "minutes15" || /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(scheduleTime))
+    && (frequency !== "monthly" || (Number.isInteger(Number(monthDay)) && Number(monthDay) >= 1 && Number(monthDay) <= 31))
+  const scheduleDescription = validSchedule ? describeSchedule(scheduleCron(frequency, scheduleTime, weekday, monthDay)) : "请完善更新计划"
 
   return (
     <>
@@ -99,7 +119,7 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
             <AlertDescription>请立即设置 ANYCAST_ADMIN_PASSWORD 替换密码。</AlertDescription>
           </Alert>
         )}
-        {error && <Alert className="border-destructive/40 bg-destructive/5 text-destructive"><AlertTitle>操作失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+        {error && !addOpen && <Alert className="border-destructive/40 bg-destructive/5 text-destructive"><AlertTitle>操作失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
         {message && <Alert className="border-emerald-300 bg-emerald-50 text-emerald-950"><AlertDescription>{message}</AlertDescription></Alert>}
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -107,16 +127,28 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
           <Card><CardHeader className="pb-3"><CardDescription>已下载内容</CardDescription><CardTitle className="text-3xl">{episodeCount}</CardTitle></CardHeader></Card>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>播客</CardTitle>
-            <CardDescription>点击播客查看下载记录和内容详情。</CardDescription>
-          </CardHeader>
+        <Dialog open={addOpen} onOpenChange={(open) => {
+          if (saving) return
+          setAddOpen(open)
+          setError("")
+          if (!open) {
+            setScheduleOpen(false)
+            setFrequency("hourly")
+            setScheduleTime("09:00")
+            setWeekday("0")
+            setMonthDay("1")
+          }
+        }}>
+          <Card>
+            <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+              <div className="space-y-1.5"><CardTitle>播客</CardTitle><CardDescription>点击播客查看下载记录和内容详情。</CardDescription></div>
+              <DialogTrigger asChild><Button className="shrink-0"><Plus />添加播客</Button></DialogTrigger>
+            </CardHeader>
           <CardContent>
             {loading ? (
               <div className="flex justify-center py-12 text-muted-foreground"><LoaderCircle className="size-5 animate-spin" /></div>
             ) : podcasts.length === 0 ? (
-              <div className="rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">还没有播客，请在下方添加。</div>
+              <div className="rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">还没有播客，点击“添加播客”开始。</div>
             ) : (
               <Table>
                 <TableHeader><TableRow><TableHead>名称 / 地址</TableHead><TableHead>已下载</TableHead><TableHead>更新计划</TableHead><TableHead>保留</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
@@ -140,7 +172,7 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
                         <span className="block max-w-md truncate text-xs text-muted-foreground" title={podcast.url}>{podcast.url}</span>
                       </TableCell>
                       <TableCell><Badge>{podcast.episode_count || 0} 集</Badge></TableCell>
-                      <TableCell><code className="rounded bg-muted px-2 py-1 text-xs">{podcast.update_period_cron}</code></TableCell>
+                      <TableCell className="whitespace-nowrap">{describeSchedule(podcast.update_period_cron)}</TableCell>
                       <TableCell>{podcast.keep_latest ?? "全部"}</TableCell>
                       <TableCell onClick={(event) => event.stopPropagation()}>
                         <div className="flex justify-end gap-1">
@@ -154,28 +186,61 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
               </Table>
             )}
           </CardContent>
-        </Card>
+          </Card>
 
-        <Card>
-          <CardHeader><CardTitle>添加播客</CardTitle><CardDescription>支持 Bilibili 和 YouTube 播放列表。</CardDescription></CardHeader>
-          <CardContent>
+          <DialogContent>
+            <DialogHeader><DialogTitle>添加播客</DialogTitle><DialogDescription>支持 Bilibili 和 YouTube 播放列表。</DialogDescription></DialogHeader>
+            {error && <Alert className="border-destructive/40 bg-destructive/5 text-destructive"><AlertTitle>操作失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
             <form className="grid gap-5" onSubmit={add}>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="名称" htmlFor="name"><Input id="name" name="name" required maxLength={64} pattern="[\w-]+" placeholder="weekly-news" /></Field>
-                <Field label="更新计划（Cron）" htmlFor="cron"><Input id="cron" name="update_period_cron" required defaultValue="0 * * * *" /></Field>
+                <Field label="更新频率" htmlFor="schedule-trigger">
+                  <Popover open={scheduleOpen} onOpenChange={setScheduleOpen}>
+                    <PopoverTrigger asChild>
+                      <Button id="schedule-trigger" type="button" variant="outline" aria-label={`更新频率：${scheduleDescription}`} className="w-full justify-between px-3 font-normal shadow-sm">
+                        {scheduleDescription}<ChevronDown aria-hidden="true" className="text-muted-foreground" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent aria-label="选择更新计划">
+                      <p className="mb-3 text-sm font-medium">选择更新计划</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {([ ["minutes15", "每 15 分钟"], ["hourly", "每小时整点"], ["daily", "每天"], ["weekly", "每周"], ["monthly", "每月"] ] as const).map(([value, label]) => (
+                          <Button key={value} type="button" size="sm" variant={frequency === value ? "secondary" : "outline"} aria-pressed={frequency === value} onClick={() => { setFrequency(value); if (value === "minutes15" || value === "hourly") setScheduleOpen(false) }}>{label}</Button>
+                        ))}
+                      </div>
+                      {(frequency === "daily" || frequency === "weekly" || frequency === "monthly") && (
+                        <div className="mt-4 grid gap-3 border-t pt-4">
+                          {frequency === "weekly" && <Field label="星期" htmlFor="weekday"><Select value={weekday} onValueChange={setWeekday}><SelectTrigger id="weekday" aria-label="星期"><SelectValue /></SelectTrigger><SelectContent>{["一", "二", "三", "四", "五", "六", "日"].map((day, index) => <SelectItem key={day} value={String(index)}>周{day}</SelectItem>)}</SelectContent></Select></Field>}
+                          {frequency === "monthly" && <Field label="每月几号" htmlFor="month-day"><Select value={monthDay} onValueChange={setMonthDay}><SelectTrigger id="month-day" aria-label="每月几号"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 31 }, (_, day) => <SelectItem key={day} value={String(day + 1)}>{day + 1} 日</SelectItem>)}</SelectContent></Select></Field>}
+                          <div className="grid grid-cols-2 gap-3">
+                            <Field label="小时" htmlFor="schedule-hour"><Select value={scheduleTime.slice(0, 2)} onValueChange={(hour) => setScheduleTime(`${hour}:${scheduleTime.slice(3)}`)}><SelectTrigger id="schedule-hour" aria-label="小时"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 24 }, (_, hour) => <SelectItem key={hour} value={String(hour).padStart(2, "0")}>{String(hour).padStart(2, "0")}</SelectItem>)}</SelectContent></Select></Field>
+                            <Field label="分钟" htmlFor="schedule-minute"><Select value={scheduleTime.slice(3)} onValueChange={(minute) => setScheduleTime(`${scheduleTime.slice(0, 2)}:${minute}`)}><SelectTrigger id="schedule-minute" aria-label="分钟"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 60 }, (_, minute) => <SelectItem key={minute} value={String(minute).padStart(2, "0")}>{String(minute).padStart(2, "0")}</SelectItem>)}</SelectContent></Select></Field>
+                          </div>
+                          <p className="text-xs text-muted-foreground">按服务器时区执行{frequency === "monthly" && "；当月没有所选日期时不执行"}</p>
+                          <Button type="button" size="sm" disabled={!validSchedule} onClick={() => setScheduleOpen(false)}>完成</Button>
+                        </div>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                </Field>
                 <Field className="sm:col-span-2" label="播放列表地址" htmlFor="url"><Input id="url" name="url" type="url" required placeholder="https://..." /></Field>
                 <Field label="保留最新集数" htmlFor="keep"><Input id="keep" name="keep_latest" type="number" min={1} placeholder="留空则不清理" /></Field>
                 <Field label="每次扫描数量" htmlFor="page-size"><Input id="page-size" name="page_size" type="number" min={1} defaultValue={20} /></Field>
-                <Field label="排序字段" htmlFor="sort-by"><select className={selectClass} id="sort-by" name="sort_by" defaultValue="date"><option value="date">发布时间</option><option value="title">标题</option></select></Field>
-                <Field label="播放列表顺序" htmlFor="sort-order"><select className={selectClass} id="sort-order" name="sort_order" defaultValue="desc"><option value="desc">新到旧</option><option value="asc">旧到新</option></select></Field>
+                <Field label="排序字段" htmlFor="sort-by"><NativeSelect id="sort-by" name="sort_by" defaultValue="date"><option value="date">发布时间</option><option value="title">标题</option></NativeSelect></Field>
+                <Field label="播放列表顺序" htmlFor="sort-order"><NativeSelect id="sort-order" name="sort_order" defaultValue="desc"><option value="desc">新到旧</option><option value="asc">旧到新</option></NativeSelect></Field>
               </div>
-              <div><Button type="submit" disabled={saving}>{saving ? <LoaderCircle className="animate-spin" /> : <Plus />}添加播客</Button></div>
+              <p className="text-sm text-muted-foreground">定时任务按服务器时区执行。</p>
+              <div className="flex justify-end"><Button type="submit" disabled={saving || !validSchedule}>{saving ? <LoaderCircle className="animate-spin" /> : <Plus />}添加播客</Button></div>
             </form>
-          </CardContent>
-        </Card>
+          </DialogContent>
+        </Dialog>
       </main>
     </>
   )
+}
+
+function NativeSelect(props: React.ComponentProps<"select">) {
+  return <div className="relative"><select className={selectClass} {...props} /><ChevronDown aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /></div>
 }
 
 function Field({ label, htmlFor, className, children }: { label: string; htmlFor: string; className?: string; children: React.ReactNode }) {
