@@ -2,6 +2,7 @@
 from typing import Literal, TypedDict
 from apscheduler.executors.base import logging
 from pathlib import Path
+import threading
 import yaml
 
 
@@ -35,6 +36,7 @@ class Config(TypedDict):
 log = logging.getLogger(__name__)
 
 __configFile = "config.yaml"
+_config_lock = threading.Lock()
 
 # 每次从播放列表取多少条参与筛选。播放列表可能有上百条，而每条没缓存的都要
 # 单独解析一次详情，所以默认只取最新的一段。
@@ -81,3 +83,37 @@ def get_config() -> Config:
         __apply_podcast_defaults(podcast) for podcast in config["podcasts"]
     ]
     return config
+
+
+def _write_config(config: dict) -> None:
+    path = Path(__get_config_file())
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    # shortcut: PyYAML 不保留手写注释；需要保留注释时再换 round-trip YAML 库。
+    temporary.write_text(
+        yaml.safe_dump(config, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def add_podcast(podcast: Podcast) -> None:
+    with _config_lock:
+        with open(__get_config_file(), "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        podcasts = config.setdefault("podcasts", [])
+        if any(item.get("name") == podcast["name"] for item in podcasts):
+            raise ValueError(f"播客 {podcast['name']} 已存在")
+        podcasts.append(dict(podcast))
+        _write_config(config)
+
+
+def remove_podcast(name: str) -> None:
+    with _config_lock:
+        with open(__get_config_file(), "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        podcasts = config.get("podcasts", [])
+        remaining = [item for item in podcasts if item.get("name") != name]
+        if len(remaining) == len(podcasts):
+            raise ValueError(f"播客 {name} 不存在")
+        config["podcasts"] = remaining
+        _write_config(config)
