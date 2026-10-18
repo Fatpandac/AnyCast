@@ -252,8 +252,14 @@ export function Dashboard({ openPodcast }: { openPodcast: (name: string) => void
                 </Field>
                 )}
                 <Field className="sm:col-span-2" label="播放列表地址" htmlFor="url"><Input id="url" name="url" type="url" required placeholder="https://..." defaultValue={editingPodcast?.url} /></Field>
-                <Field label="保留最新集数" htmlFor="keep"><Input id="keep" name="keep_latest" type="number" min={1} placeholder="留空则不清理" defaultValue={editingPodcast?.keep_latest ?? ""} /></Field>
-                <Field label="每次扫描数量" htmlFor="page-size"><Input id="page-size" name="page_size" type="number" min={1} defaultValue={editingPodcast?.page_size ?? 20} /></Field>
+                <Field label="保留最新集数" htmlFor="keep">
+                  <Input id="keep" name="keep_latest" type="number" min={1} placeholder="留空则不清理" defaultValue={editingPodcast?.keep_latest ?? ""} aria-describedby="keep-help" />
+                  <p id="keep-help" className="mt-1.5 text-xs text-muted-foreground">只保留最近 N 集；留空不清理，首次下载最新 10 集，之后下载检查范围内的全部新内容。</p>
+                </Field>
+                <Field label="每次扫描数量" htmlFor="page-size">
+                  <Input id="page-size" name="page_size" type="number" min={1} defaultValue={editingPodcast?.page_size ?? 20} aria-describedby="page-size-help" />
+                  <p id="page-size-help" className="mt-1.5 text-xs text-muted-foreground">YouTube 每轮检查播放列表最新 N 条；留空使用默认值 20。</p>
+                </Field>
                 <Field label="排序字段" htmlFor="sort-by"><NativeSelect id="sort-by" name="sort_by" defaultValue={editingPodcast?.sort_by ?? "date"}><option value="date">发布时间</option><option value="title">标题</option></NativeSelect></Field>
                 <Field label="播放列表顺序" htmlFor="sort-order"><NativeSelect id="sort-order" name="sort_order" defaultValue={editingPodcast?.sort_order ?? "desc"}><option value="desc">新到旧</option><option value="asc">旧到新</option></NativeSelect></Field>
               </div>

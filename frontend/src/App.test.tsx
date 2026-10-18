@@ -101,6 +101,8 @@ describe("AnyCast admin", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "添加播客" }))
     const dialog = screen.getByRole("dialog", { name: "添加播客" })
+    expect(within(dialog).getByText("只保留最近 N 集；留空不清理，首次下载最新 10 集，之后下载检查范围内的全部新内容。")).toBeInTheDocument()
+    expect(within(dialog).getByText("YouTube 每轮检查播放列表最新 N 条；留空使用默认值 20。")).toBeInTheDocument()
     fireEvent.change(within(dialog).getByLabelText("名称"), { target: { value: "weekly" } })
     fireEvent.change(within(dialog).getByLabelText("播放列表地址"), { target: { value: podcast.url } })
     fireEvent.submit(within(dialog).getByRole("button", { name: "添加播客" }).closest("form")!)
