@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, expect, it, vi } from "vitest"
 import { App } from "./App"
 
@@ -10,26 +10,59 @@ const settings = {
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   window.history.replaceState({}, "", "/admin")
 })
 
-it("shows the entire running log in a large scrollable window and refreshes it", async () => {
+it("loads older lines on scroll and appends live lines without moving the reader", async () => {
   window.history.replaceState({}, "", "/admin/settings")
-  let log = "oldest line\n" + "x".repeat(70000) + "\nlatest line"
-  const fetch = vi.fn((url: string) => Promise.resolve(url.endsWith("/logs")
-    ? { ok: true, text: () => Promise.resolve(log) }
-    : { ok: true, json: () => Promise.resolve(settings) } as Response))
+  const recent = Array.from({ length: 100 }, (_, i) => `episode ${i + 50}`)
+  let poll = () => {}
+  let newEntry = false
+  const nativeInterval = window.setInterval.bind(window)
+  const interval = vi.spyOn(window, "setInterval").mockImplementation((callback, delay) => {
+    if (delay === 3000) {
+      poll = callback as () => void
+      return 1 as unknown as ReturnType<typeof setInterval>
+    }
+    return nativeInterval(callback, delay) as unknown as ReturnType<typeof setInterval>
+  })
+  const fetch = vi.fn((url: string) => Promise.resolve({ ok: true, json: () => Promise.resolve(
+    url === "/api/admin/logs?before=123%3A456"
+      ? { lines: Array.from({ length: 50 }, (_, i) => `episode ${i}`), before: null, after: "123:789" }
+      : url === "/api/admin/logs?after=123%3A789"
+        ? { lines: newEntry ? ["new run"] : [], before: null, after: newEntry ? "123:801" : "123:789" }
+        : url === "/api/admin/logs"
+          ? { lines: recent, before: "123:456", after: "123:789" }
+          : settings,
+  ) } as Response))
   vi.stubGlobal("fetch", fetch)
   render(<App />)
-  const editor = await screen.findByRole("textbox", { name: "运行日志" })
-  expect(editor).toHaveValue(log)
+  const editor = await screen.findByRole("textbox", { name: "运行日志" }) as HTMLTextAreaElement
+  await waitFor(() => expect(editor).toHaveValue(recent.join("\n")))
+  expect(screen.queryByRole("button", { name: "刷新运行日志" })).not.toBeInTheDocument()
+  expect(interval).toHaveBeenCalledWith(expect.any(Function), 3000)
   expect(editor).toHaveAttribute("readonly")
   expect(editor).toHaveClass("overflow-auto")
   expect(editor).toHaveClass("h-[70vh]")
-  log = "newest run\nERROR: No route to host"
-  fireEvent.click(screen.getByRole("button", { name: "刷新运行日志" }))
-  await waitFor(() => expect(editor).toHaveValue(log))
-  expect(fetch).toHaveBeenCalledWith("/api/admin/logs", expect.objectContaining({ credentials: "same-origin" }))
+  Object.defineProperty(editor, "scrollHeight", { configurable: true, get: () => editor.value.startsWith("episode 0\n") ? 4000 : 3000 })
+  fireEvent.scroll(editor, { target: { scrollTop: 0 } })
+  await waitFor(() => expect(editor).toHaveValue(
+    [...Array.from({ length: 50 }, (_, i) => `episode ${i}`), ...recent].join("\n"),
+  ))
+  expect(fetch).toHaveBeenCalledWith("/api/admin/logs?before=123%3A456", expect.objectContaining({ credentials: "same-origin" }))
+  expect(editor.scrollTop).toBe(1000)
+  fireEvent.scroll(editor, { target: { scrollTop: 0 } })
+  expect(fetch.mock.calls.filter(([url]) => url === "/api/admin/logs?before=123%3A456")).toHaveLength(1)
+  editor.scrollTop = 123
+  await act(async () => { poll() })
+  expect(editor.scrollTop).toBe(123)
+  expect(editor.value).toBe([...Array.from({ length: 50 }, (_, i) => `episode ${i}`), ...recent].join("\n"))
+  newEntry = true
+  await act(async () => { poll() })
+  expect(fetch).toHaveBeenCalledWith("/api/admin/logs?after=123%3A789", expect.objectContaining({ credentials: "same-origin" }))
+  expect(editor.scrollTop).toBe(123)
+  expect(editor.value.endsWith("episode 149\nnew run")).toBe(true)
 })
 
 it("configures HTTPS domain and offers passkey registration only on that domain", async () => {

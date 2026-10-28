@@ -14,7 +14,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, field_validator
 from fastapi.security import HTTPBasicCredentials
 from typing import Annotated
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Query
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi.responses import FileResponse, Response, RedirectResponse
@@ -59,20 +59,32 @@ from src.downloader import run_downloader, request_stop, request_stop_reset
 from src.jobs import start_cron_jobs, stop_cron_jobs, sync_cron_jobs
 
 
+class PrivateRotatingFileHandler(RotatingFileHandler):
+    def _open(self):
+        stream = super()._open()
+        os.chmod(self.baseFilename, 0o600)
+        return stream
+
+
 log = logging.getLogger(__name__)
-ERROR_LOG_PATH = Path("logs/anycast-errors.log")
-RUNTIME_LOG_PATH = Path("anycast.log")
+RUNTIME_LOG_PATH = Path("logs/anycast-runtime.log")
+LOG_BACKUPS = 5
 
 
-def start_error_log() -> RotatingFileHandler:
-    ERROR_LOG_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    handler = RotatingFileHandler(
-        ERROR_LOG_PATH, maxBytes=512 * 1024, backupCount=1, encoding="utf-8"
+def start_runtime_log() -> RotatingFileHandler:
+    # shortcut: file rotation assumes one writer; use a shared log service with multiple workers.
+    RUNTIME_LOG_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    handler = PrivateRotatingFileHandler(
+        RUNTIME_LOG_PATH,
+        maxBytes=10 * 1024 * 1024,
+        backupCount=LOG_BACKUPS,
+        encoding="utf-8",
     )
-    handler.setLevel(logging.ERROR)
+    handler.setLevel(logging.INFO)
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     )
+    logging.getLogger().setLevel(logging.INFO)
     logging.getLogger().addHandler(handler)
     return handler
 
@@ -83,7 +95,7 @@ async def lifespan(_app: FastAPI):
     init_database()
     request_stop_reset()
     config = get_config()
-    error_handler = start_error_log()
+    runtime_handler = start_runtime_log()
     download_tasks = [
         asyncio.create_task(run_downloader(podcast)) for podcast in config["podcasts"]
     ]
@@ -94,8 +106,8 @@ async def lifespan(_app: FastAPI):
         task.cancel()
     await asyncio.gather(*download_tasks, return_exceptions=True)
     stop_cron_jobs()
-    logging.getLogger().removeHandler(error_handler)
-    error_handler.close()
+    logging.getLogger().removeHandler(runtime_handler)
+    runtime_handler.close()
 
 
 app = FastAPI(
@@ -126,15 +138,108 @@ async def root():
     return {"status": "ok", "podcast_count": len(podcasts)}
 
 
-@app.get("/api/admin/logs")
-async def admin_logs(_auth: None = Depends(require_admin)):
-    headers = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
-    path = RUNTIME_LOG_PATH if RUNTIME_LOG_PATH.is_file() else ERROR_LOG_PATH
-    if not path.is_file() or path.stat().st_size == 0:
-        return Response(
-            "暂无运行日志。", media_type="text/plain; charset=utf-8", headers=headers
+def _runtime_log_page(before: str | None, after: str | None = None) -> dict:
+    paths = [
+        RUNTIME_LOG_PATH,
+        *(Path(f"{RUNTIME_LOG_PATH}.{i}") for i in range(1, LOG_BACKUPS + 1)),
+    ]
+    files = [
+        (path, path.stat()) for path in paths if path.is_file() and path.stat().st_size
+    ]
+    if not files:
+        return {"lines": [], "before": None, "after": None}
+    if after:
+        inode, position = map(int, after.split(":"))
+        index = next(
+            (i for i, (_, stat) in enumerate(files) if stat.st_ino == inode), None
         )
-    return FileResponse(path, media_type="text/plain; charset=utf-8", headers=headers)
+        if index is None or position > files[index][1].st_size:
+            raise HTTPException(status_code=409, detail="日志已轮转，正在加载最新记录")
+        lines: list[bytes] = []
+        cursor = after
+        for path, stat in reversed(files[: index + 1]):
+            with path.open("rb") as stream:
+                stream.seek(position if stat.st_ino == inode else 0)
+                while stream.tell() < stat.st_size and len(lines) < 100:
+                    line = stream.readline(stat.st_size - stream.tell())
+                    if not line.endswith(b"\n"):
+                        break
+                    lines.append(line)
+                    cursor = f"{stat.st_ino}:{stream.tell()}"
+            if len(lines) == 100:
+                break
+        return {
+            "lines": [
+                line.decode("utf-8", errors="replace").rstrip("\r\n") for line in lines
+            ],
+            "before": None,
+            "after": cursor,
+        }
+    if before:
+        inode, position = map(int, before.split(":"))
+        index = next(
+            (i for i, (_, stat) in enumerate(files) if stat.st_ino == inode), None
+        )
+        if index is None or position > files[index][1].st_size:
+            raise HTTPException(
+                status_code=409, detail="更早的日志已轮转，无法继续加载"
+            )
+    else:
+        index, position = 0, files[0][1].st_size
+
+    lines: list[bytes] = []
+    cursor = None
+    while index < len(files) and len(lines) < 100:
+        path, stat = files[index]
+        with path.open("rb") as stream:
+            data = b""
+            offset = position
+            while offset > 0 and data.count(b"\n") <= 100 - len(lines):
+                count = min(offset, 8192)
+                offset -= count
+                stream.seek(offset)
+                data = stream.read(count) + data
+            entries = data.splitlines(keepends=True)
+            if offset > 0:
+                entries = entries[1:]  # first fragment may start mid-line
+            selected = entries[-(100 - len(lines)) :]
+            start = position - sum(map(len, selected))
+            lines = selected + lines
+        index += 1
+        cursor = (
+            f"{stat.st_ino}:{start}"
+            if start > 0
+            else (
+                f"{files[index][1].st_ino}:{files[index][1].st_size}"
+                if index < len(files)
+                else None
+            )
+        )
+        position = files[index][1].st_size if index < len(files) else 0
+    return {
+        "lines": [
+            line.decode("utf-8", errors="replace").rstrip("\r\n") for line in lines
+        ],
+        "before": cursor,
+        "after": f"{files[0][1].st_ino}:{files[0][1].st_size}",
+    }
+
+
+@app.get("/api/admin/logs")
+async def admin_logs(
+    response: Response,
+    before: Annotated[
+        str | None, Query(max_length=50, pattern=r"^[0-9]+:[0-9]+$")
+    ] = None,
+    after: Annotated[
+        str | None, Query(max_length=50, pattern=r"^[0-9]+:[0-9]+$")
+    ] = None,
+    _auth: None = Depends(require_admin),
+):
+    if before and after:
+        raise HTTPException(status_code=422, detail="只能指定 before 或 after")
+    response.headers["Cache-Control"] = "no-store"
+    return _runtime_log_page(before, after)
 
 
 @app.get("/api/admin/settings")

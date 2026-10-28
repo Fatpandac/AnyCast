@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react"
+import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { ArrowLeft, LoaderCircle, Save } from "lucide-react"
 
 import { changeAdminPassword, getCookieFile, getRuntimeLog, getSettings, saveCookieFile, savePasskeyOrigin, saveSettings, type Settings } from "@/api"
@@ -36,23 +36,69 @@ export function SettingsPage({ goBack }: { goBack: () => void }) {
   const [passkeyCount, setPasskeyCount] = useState(0)
   const [passkeyError, setPasskeyError] = useState("")
   const [passkeyBusy, setPasskeyBusy] = useState(false)
-  const [runtimeLog, setRuntimeLog] = useState<string | null>(null)
+  const [runtimeLog, setRuntimeLog] = useState<string[] | null>(null)
+  const [logBefore, setLogBefore] = useState<string | null>(null)
   const [runtimeLogError, setRuntimeLogError] = useState("")
   const [logLoading, setLogLoading] = useState(false)
+  const logRef = useRef<HTMLTextAreaElement>(null)
+  const logBusy = useRef(false)
+  const logAfter = useRef<string | null>(null)
+  const scrollRestore = useRef<{ height: number; top: number } | { top: number } | "bottom" | null>(null)
 
-  async function loadRuntimeLog() {
-    setLogLoading(true)
+  async function loadRuntimeLog(before?: string, live = false) {
+    if (logBusy.current) return
+    logBusy.current = true
+    if (!live) setLogLoading(true)
     try {
-      setRuntimeLog(await getRuntimeLog())
+      const page = await getRuntimeLog(before, live ? logAfter.current ?? undefined : undefined)
+      if (before) {
+        const view = logRef.current
+        scrollRestore.current = view ? { height: view.scrollHeight, top: view.scrollTop } : null
+        setRuntimeLog((current) => [...page.lines, ...(current ?? [])])
+        setLogBefore(page.before)
+      } else if (live && logAfter.current) {
+        if (page.lines.length) {
+          const view = logRef.current
+          scrollRestore.current = view && view.scrollHeight - view.scrollTop - view.clientHeight <= 40
+            ? "bottom" : { top: view?.scrollTop ?? 0 }
+          setRuntimeLog((current) => [...(current ?? []), ...page.lines])
+        }
+      } else {
+        scrollRestore.current = "bottom"
+        setRuntimeLog(page.lines)
+        setLogBefore(page.before)
+      }
+      if (!before) logAfter.current = page.after
       setRuntimeLogError("")
     } catch (reason) {
+      if (before) setLogBefore(null)
+      if (live && reason instanceof Error && reason.message.includes("日志已轮转")) logAfter.current = null
       setRuntimeLogError(reason instanceof Error ? reason.message : "读取运行日志失败")
     } finally {
-      setLogLoading(false)
+      logBusy.current = false
+      if (!live) setLogLoading(false)
     }
   }
 
-  useEffect(() => { void loadRuntimeLog() }, [])
+  useEffect(() => {
+    void loadRuntimeLog()
+    const timer = window.setInterval(() => { void loadRuntimeLog(undefined, true) }, 3000)
+    return () => window.clearInterval(timer)
+  }, [])
+  useLayoutEffect(() => {
+    const view = logRef.current
+    if (!view || !scrollRestore.current) return
+    view.scrollTop = scrollRestore.current === "bottom"
+      ? view.scrollHeight
+      : "height" in scrollRestore.current
+        ? view.scrollHeight - scrollRestore.current.height + scrollRestore.current.top
+        : scrollRestore.current.top
+    scrollRestore.current = null
+  }, [runtimeLog])
+
+  function scrollRuntimeLog() {
+    if (logRef.current && logRef.current.scrollTop <= 32 && logBefore) void loadRuntimeLog(logBefore)
+  }
 
   function togglePasswordDialog(open: boolean) {
     if (passwordSaving) return
@@ -284,12 +330,11 @@ export function SettingsPage({ goBack }: { goBack: () => void }) {
           <div className="flex items-center justify-between gap-3">
             <div className="space-y-1">
               <h2 id="runtime-log-title" className="text-lg font-semibold">运行日志</h2>
-              <p className="text-sm text-muted-foreground">完整日志；优先读取 anycast.log，未找到时显示新版服务记录的错误。</p>
+              <p className="text-sm text-muted-foreground">日志每 3 秒自动更新；初次加载最新 100 行，向上滚动查看更多。</p>
             </div>
-            <Button type="button" variant="outline" disabled={logLoading} onClick={() => void loadRuntimeLog()}>刷新运行日志</Button>
           </div>
           {runtimeLogError && <Alert role="alert"><AlertDescription>{runtimeLogError}</AlertDescription></Alert>}
-          <textarea aria-label="运行日志" readOnly spellCheck={false} wrap="soft" value={runtimeLog ?? ""} placeholder={logLoading ? "正在加载运行日志…" : "暂无运行日志。"} className="h-[70vh] min-h-[32rem] w-full resize-y overflow-auto rounded-md border bg-muted p-4 font-mono text-xs leading-relaxed" />
+          <textarea ref={logRef} aria-label="运行日志" readOnly spellCheck={false} wrap="soft" value={runtimeLog?.join("\n") ?? ""} onScroll={scrollRuntimeLog} placeholder={logLoading ? "正在加载运行日志…" : "暂无运行日志。"} className="h-[70vh] min-h-[32rem] w-full resize-y overflow-auto rounded-md border bg-muted p-4 font-mono text-xs leading-relaxed" />
         </section>
       </main>
     </>

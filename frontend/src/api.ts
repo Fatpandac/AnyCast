@@ -81,10 +81,11 @@ export function saveCookieFile(path: string, content: string, revision: string) 
   })
 }
 
-export async function getRuntimeLog() {
-  const response = await fetch("/api/admin/logs", { credentials: "same-origin", cache: "no-store" })
-  if (!response.ok) throw new Error(`读取运行日志失败（${response.status}）`)
-  return response.text()
+export type RuntimeLogPage = { lines: string[]; before: string | null; after: string | null }
+
+export function getRuntimeLog(before?: string, after?: string) {
+  const cursor = before ? `?before=${encodeURIComponent(before)}` : after ? `?after=${encodeURIComponent(after)}` : ""
+  return request<RuntimeLogPage>(`/api/admin/logs${cursor}`, { cache: "no-store" })
 }
 
 export function listPodcasts() {
