@@ -49,6 +49,28 @@ describe("AnyCast admin", () => {
     expect(screen.getByRole("heading", { name: "播客" })).toBeInTheDocument()
   })
 
+  it("starts an update for just the selected podcast without opening its details", async () => {
+    const fetch = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({ podcasts: [podcast], uses_default_password: false }))
+      .mockImplementationOnce(() => jsonResponse({ status: "queued" }))
+    vi.stubGlobal("fetch", fetch)
+    render(<App />)
+    fireEvent.click(await screen.findByRole("button", { name: "立即更新 weekly" }))
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/admin/podcasts/weekly/update", expect.objectContaining({ method: "POST" })))
+    expect(await screen.findByText(/已提交更新任务/)).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/admin")
+  })
+
+  it("shows a retryable error when the manual update cannot be queued", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockImplementationOnce(() => jsonResponse({ podcasts: [podcast], uses_default_password: false }))
+      .mockImplementationOnce(() => Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve({ detail: "更新任务已提交" }) })))
+    render(<App />)
+    fireEvent.click(await screen.findByRole("button", { name: "立即更新 weekly" }))
+    expect(await screen.findByText("更新任务已提交")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "立即更新 weekly" })).toBeEnabled()
+  })
+
   it("opens podcast details when clicking anywhere on its row", async () => {
     vi.stubGlobal("fetch", vi.fn((url: string | URL | Request) =>
       jsonResponse(String(url).includes("/weekly")

@@ -114,6 +114,10 @@ export function updatePodcast(name: string, podcast: PodcastInput) {
   )
 }
 
+export function runPodcastUpdate(name: string) {
+  return request<{ status: string }>(`/api/admin/podcasts/${encodeURIComponent(name)}/update`, { method: "POST" })
+}
+
 export function deletePodcast(name: string) {
   return request<{ status: string }>(
     `/api/admin/podcasts/${encodeURIComponent(name)}`,

@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react"
-import { AlertTriangle, ChevronDown, ExternalLink, LoaderCircle, Pencil, Plus, Radio, Settings2, Trash2 } from "lucide-react"
+import { AlertTriangle, ChevronDown, ExternalLink, LoaderCircle, Pencil, Plus, Radio, RotateCw, Settings2, Trash2 } from "lucide-react"
 
-import { createPodcast, deletePodcast, listPodcasts, updatePodcast, type Podcast, type PodcastInput } from "@/api"
+import { createPodcast, deletePodcast, listPodcasts, runPodcastUpdate, updatePodcast, type Podcast, type PodcastInput } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -21,6 +21,7 @@ export function Dashboard({ openPodcast, openSettings }: { openPodcast: (name: s
   const [usesDefaultPassword, setUsesDefaultPassword] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [updating, setUpdating] = useState<string | null>(null)
   const [editingPodcast, setEditingPodcast] = useState<Podcast | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [scheduleOpen, setScheduleOpen] = useState(false)
@@ -106,6 +107,20 @@ export function Dashboard({ openPodcast, openSettings }: { openPodcast: (name: s
     }
     setError("")
     setEditingPodcast(podcast)
+  }
+
+  async function updateNow(name: string) {
+    setUpdating(name)
+    setError("")
+    setMessage("")
+    try {
+      await runPodcastUpdate(name)
+      setMessage(`${name} 已提交更新任务，可在「设置 → 运行日志」查看进度。`)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "提交更新失败")
+    } finally {
+      setUpdating(null)
+    }
   }
 
   async function remove(name: string) {
@@ -197,6 +212,7 @@ export function Dashboard({ openPodcast, openSettings }: { openPodcast: (name: s
                       <TableCell>{podcast.keep_latest ?? "全部"}</TableCell>
                       <TableCell onClick={(event) => event.stopPropagation()}>
                         <div className="flex justify-end gap-1">
+                          <Button size="sm" variant="ghost" aria-label={`立即更新 ${podcast.name}`} disabled={updating === podcast.name} onClick={() => void updateNow(podcast.name)}>{updating === podcast.name ? <LoaderCircle className="animate-spin" /> : <RotateCw />}立即更新</Button>
                           <Button size="sm" variant="ghost" aria-label={`编辑 ${podcast.name}`} onClick={() => openEditor(podcast)}><Pencil />编辑</Button>
                           <Button asChild size="sm" variant="ghost"><a href={`/rss/${encodeURIComponent(podcast.name)}`} target="_blank" rel="noreferrer"><ExternalLink />RSS</a></Button>
                           <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => void remove(podcast.name)}><Trash2 />移除</Button>

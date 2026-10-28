@@ -67,6 +67,19 @@ class PrivateRotatingFileHandler(RotatingFileHandler):
 
 
 log = logging.getLogger(__name__)
+_manual_updates: dict[str, asyncio.Task[None]] = {}
+
+
+def _update_finished(name: str, task: asyncio.Task[None]) -> None:
+    _manual_updates.pop(name, None)
+    if not task.cancelled():
+        try:
+            task.result()
+            log.info("手动更新结束：%s", name)
+        except Exception:
+            log.exception("手动更新失败：%s", name)
+
+
 RUNTIME_LOG_PATH = Path("logs/anycast-runtime.log")
 LOG_BACKUPS = 5
 
@@ -102,9 +115,12 @@ async def lifespan(_app: FastAPI):
     start_cron_jobs()
     yield
     request_stop()
-    for task in download_tasks:
+    for task in [*download_tasks, *_manual_updates.values()]:
         task.cancel()
-    await asyncio.gather(*download_tasks, return_exceptions=True)
+    await asyncio.gather(
+        *download_tasks, *_manual_updates.values(), return_exceptions=True
+    )
+    _manual_updates.clear()
     stop_cron_jobs()
     logging.getLogger().removeHandler(runtime_handler)
     runtime_handler.close()
@@ -363,6 +379,25 @@ async def admin_update_podcast(
     init_database()
     sync_cron_jobs()
     return {"podcast": podcast}
+
+
+@app.post("/api/admin/podcasts/{name}/update", status_code=202)
+async def admin_run_podcast_update(
+    name: str, request: Request, _auth: None = Depends(require_admin)
+):
+    check_admin_request_origin(request)
+    podcast = next(
+        (item for item in _get_podcasts_from_file() if item["name"] == name), None
+    )
+    if podcast is None:
+        raise HTTPException(status_code=404, detail="播客不存在")
+    if name in _manual_updates:
+        raise HTTPException(status_code=409, detail="更新任务已提交")
+    task = asyncio.create_task(run_downloader(podcast))
+    _manual_updates[name] = task
+    task.add_done_callback(lambda done: _update_finished(name, done))
+    log.info("手动更新已提交：%s", name)
+    return {"status": "queued"}
 
 
 @app.get("/api/admin/podcasts/{name}")

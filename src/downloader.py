@@ -37,6 +37,8 @@ logging.getLogger("bilix").setLevel(logging.WARNING)
 logging.getLogger("yt_dlp").setLevel(logging.WARNING)
 
 _cancel_downloads = threading.Event()
+# shortcut: same-podcast serialization is process-local; use a shared queue with multiple workers.
+_podcast_locks: dict[str, asyncio.Lock] = {}
 
 DOWNLOADS_DIR = Path("downloads")
 # keep_latest 未配置时，首次抓取的集数上限（之后只跟进新发布的剧集）
@@ -754,7 +756,9 @@ async def __run(podcast: Podcast):
 
 
 async def run_downloader(podcast: Podcast) -> None:
-    await __run(podcast)
+    lock = _podcast_locks.setdefault(podcast["name"], asyncio.Lock())
+    async with lock:
+        await __run(podcast)
 
 
 def request_stop() -> None:

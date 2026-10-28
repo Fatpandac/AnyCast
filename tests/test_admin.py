@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
+from typing import cast
+
 from fastapi.testclient import TestClient
 
 from src import main
+from src.config import Podcast
 
 
 def _podcast(name: str = "weekly") -> dict:
@@ -376,6 +379,77 @@ def test_admin_api_adds_podcast_and_syncs_jobs(monkeypatch):
     assert response.json() == {"podcast": _podcast()}
     assert saved == [_podcast()]
     assert sync_calls == [True]
+
+
+def test_same_podcast_downloads_do_not_overlap(monkeypatch):
+    import asyncio
+    from src import downloader
+
+    active = 0
+    peak = 0
+
+    async def fake_run(podcast):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+
+    monkeypatch.setattr(downloader, "__run", fake_run)
+
+    async def check():
+        await asyncio.gather(
+            downloader.run_downloader(cast(Podcast, _podcast())),
+            downloader.run_downloader(cast(Podcast, _podcast())),
+        )
+
+    asyncio.run(check())
+    assert peak == 1
+
+
+def test_admin_can_start_one_podcast_update(monkeypatch):
+    monkeypatch.setenv("ANYCAST_ADMIN_PASSWORD", "secret")
+    monkeypatch.setattr(main, "_get_podcasts_from_file", lambda: [_podcast()])
+    scheduled = []
+
+    class FakeTask:
+        def add_done_callback(self, callback):
+            self.callback = callback
+
+        def cancelled(self):
+            return False
+
+        def result(self):
+            return None
+
+    def schedule(coro):
+        scheduled.append(coro)
+        coro.close()
+        return FakeTask()
+
+    monkeypatch.setattr(main.asyncio, "create_task", schedule)
+    client = TestClient(main.app)
+    url = "/api/admin/podcasts/weekly/update"
+    assert client.post(url).status_code == 401
+    assert (
+        client.post(
+            url, auth=("admin", "secret"), headers={"Origin": "https://evil.example"}
+        ).status_code
+        == 403
+    )
+    response = client.post(url, auth=("admin", "secret"))
+    assert response.status_code == 202
+    assert len(scheduled) == 1
+    assert client.post(url, auth=("admin", "secret")).status_code == 409
+    # Complete the task before testing not-found to avoid state leaking to other tests.
+    scheduled_task = cast(FakeTask, main._manual_updates["weekly"])
+    scheduled_task.callback(scheduled_task)
+    assert (
+        client.post(
+            "/api/admin/podcasts/missing/update", auth=("admin", "secret")
+        ).status_code
+        == 404
+    )
 
 
 def test_admin_api_updates_podcast_and_syncs_jobs(monkeypatch):
