@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react"
 import { ArrowLeft, LoaderCircle, Save } from "lucide-react"
 
-import { changeAdminPassword, getCookieFile, getSettings, saveCookieFile, savePasskeyOrigin, saveSettings, type Settings } from "@/api"
+import { changeAdminPassword, getCookieFile, getRuntimeLog, getSettings, saveCookieFile, savePasskeyOrigin, saveSettings, type Settings } from "@/api"
 import { registerPasskey } from "@/passkeys"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -36,6 +36,23 @@ export function SettingsPage({ goBack }: { goBack: () => void }) {
   const [passkeyCount, setPasskeyCount] = useState(0)
   const [passkeyError, setPasskeyError] = useState("")
   const [passkeyBusy, setPasskeyBusy] = useState(false)
+  const [runtimeLog, setRuntimeLog] = useState<string | null>(null)
+  const [runtimeLogError, setRuntimeLogError] = useState("")
+  const [logLoading, setLogLoading] = useState(false)
+
+  async function loadRuntimeLog() {
+    setLogLoading(true)
+    try {
+      setRuntimeLog(await getRuntimeLog())
+      setRuntimeLogError("")
+    } catch (reason) {
+      setRuntimeLogError(reason instanceof Error ? reason.message : "读取运行日志失败")
+    } finally {
+      setLogLoading(false)
+    }
+  }
+
+  useEffect(() => { void loadRuntimeLog() }, [])
 
   function togglePasswordDialog(open: boolean) {
     if (passwordSaving) return
@@ -182,7 +199,7 @@ export function SettingsPage({ goBack }: { goBack: () => void }) {
           <p className="mt-1 text-sm text-muted-foreground">管理服务监听和 YouTube 下载选项</p>
         </div>
       </header>
-      <main className="mx-auto grid max-w-3xl gap-5 px-4 py-6 sm:px-6">
+      <main className="mx-auto grid grid-cols-1 max-w-3xl gap-5 px-4 py-6 sm:px-6">
         {error && <Alert className="border-destructive/40 bg-destructive/5 text-destructive" role="alert"><AlertTitle>操作失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
         {saved && <Alert role="status"><AlertDescription>设置已保存。修改监听地址或端口后，请重启服务；YouTube Cookie 设置将在下次下载时生效。</AlertDescription></Alert>}
         {!settings && !error && <div className="flex justify-center py-16 text-muted-foreground"><LoaderCircle className="size-6 animate-spin" /></div>}
@@ -262,6 +279,17 @@ export function SettingsPage({ goBack }: { goBack: () => void }) {
             {configuredOrigin && window.location.origin !== configuredOrigin && <p className="text-sm text-muted-foreground">请用 {configuredOrigin}/admin/settings 访问后注册；反向代理需保留 Host 请求头。</p>}
             {passkeyError && <Alert role="alert" className="border-destructive/40 bg-destructive/5 text-destructive"><AlertDescription>{passkeyError}</AlertDescription></Alert>}
           </div>
+        </section>
+        <section aria-labelledby="runtime-log-title" className="relative left-1/2 grid w-[min(95vw,70rem)] -translate-x-1/2 gap-3 border-t py-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="space-y-1">
+              <h2 id="runtime-log-title" className="text-lg font-semibold">运行日志</h2>
+              <p className="text-sm text-muted-foreground">完整日志；优先读取 anycast.log，未找到时显示新版服务记录的错误。</p>
+            </div>
+            <Button type="button" variant="outline" disabled={logLoading} onClick={() => void loadRuntimeLog()}>刷新运行日志</Button>
+          </div>
+          {runtimeLogError && <Alert role="alert"><AlertDescription>{runtimeLogError}</AlertDescription></Alert>}
+          <textarea aria-label="运行日志" readOnly spellCheck={false} wrap="soft" value={runtimeLog ?? ""} placeholder={logLoading ? "正在加载运行日志…" : "暂无运行日志。"} className="h-[70vh] min-h-[32rem] w-full resize-y overflow-auto rounded-md border bg-muted p-4 font-mono text-xs leading-relaxed" />
         </section>
       </main>
     </>

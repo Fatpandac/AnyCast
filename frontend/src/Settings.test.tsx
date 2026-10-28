@@ -13,6 +13,25 @@ afterEach(() => {
   window.history.replaceState({}, "", "/admin")
 })
 
+it("shows the entire running log in a large scrollable window and refreshes it", async () => {
+  window.history.replaceState({}, "", "/admin/settings")
+  let log = "oldest line\n" + "x".repeat(70000) + "\nlatest line"
+  const fetch = vi.fn((url: string) => Promise.resolve(url.endsWith("/logs")
+    ? { ok: true, text: () => Promise.resolve(log) }
+    : { ok: true, json: () => Promise.resolve(settings) } as Response))
+  vi.stubGlobal("fetch", fetch)
+  render(<App />)
+  const editor = await screen.findByRole("textbox", { name: "运行日志" })
+  expect(editor).toHaveValue(log)
+  expect(editor).toHaveAttribute("readonly")
+  expect(editor).toHaveClass("overflow-auto")
+  expect(editor).toHaveClass("h-[70vh]")
+  log = "newest run\nERROR: No route to host"
+  fireEvent.click(screen.getByRole("button", { name: "刷新运行日志" }))
+  await waitFor(() => expect(editor).toHaveValue(log))
+  expect(fetch).toHaveBeenCalledWith("/api/admin/logs", expect.objectContaining({ credentials: "same-origin" }))
+})
+
 it("configures HTTPS domain and offers passkey registration only on that domain", async () => {
   window.history.replaceState({}, "", "/admin/settings")
   const fetch = vi.fn((url: string, options?: RequestInit) => Promise.resolve({ ok: true, json: () => Promise.resolve(

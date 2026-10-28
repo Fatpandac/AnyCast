@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import mimetypes
 import logging
+from logging.handlers import RotatingFileHandler
 import asyncio
 import os
 from contextlib import asynccontextmanager
@@ -59,6 +60,21 @@ from src.jobs import start_cron_jobs, stop_cron_jobs, sync_cron_jobs
 
 
 log = logging.getLogger(__name__)
+ERROR_LOG_PATH = Path("logs/anycast-errors.log")
+RUNTIME_LOG_PATH = Path("anycast.log")
+
+
+def start_error_log() -> RotatingFileHandler:
+    ERROR_LOG_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    handler = RotatingFileHandler(
+        ERROR_LOG_PATH, maxBytes=512 * 1024, backupCount=1, encoding="utf-8"
+    )
+    handler.setLevel(logging.ERROR)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    logging.getLogger().addHandler(handler)
+    return handler
 
 
 @asynccontextmanager
@@ -67,6 +83,7 @@ async def lifespan(_app: FastAPI):
     init_database()
     request_stop_reset()
     config = get_config()
+    error_handler = start_error_log()
     download_tasks = [
         asyncio.create_task(run_downloader(podcast)) for podcast in config["podcasts"]
     ]
@@ -77,6 +94,8 @@ async def lifespan(_app: FastAPI):
         task.cancel()
     await asyncio.gather(*download_tasks, return_exceptions=True)
     stop_cron_jobs()
+    logging.getLogger().removeHandler(error_handler)
+    error_handler.close()
 
 
 app = FastAPI(
@@ -105,6 +124,17 @@ app.mount(
 async def root():
     podcasts = _get_podcasts_from_file()
     return {"status": "ok", "podcast_count": len(podcasts)}
+
+
+@app.get("/api/admin/logs")
+async def admin_logs(_auth: None = Depends(require_admin)):
+    headers = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+    path = RUNTIME_LOG_PATH if RUNTIME_LOG_PATH.is_file() else ERROR_LOG_PATH
+    if not path.is_file() or path.stat().st_size == 0:
+        return Response(
+            "暂无运行日志。", media_type="text/plain; charset=utf-8", headers=headers
+        )
+    return FileResponse(path, media_type="text/plain; charset=utf-8", headers=headers)
 
 
 @app.get("/api/admin/settings")

@@ -81,6 +81,12 @@ export function saveCookieFile(path: string, content: string, revision: string) 
   })
 }
 
+export async function getRuntimeLog() {
+  const response = await fetch("/api/admin/logs", { credentials: "same-origin", cache: "no-store" })
+  if (!response.ok) throw new Error(`读取运行日志失败（${response.status}）`)
+  return response.text()
+}
+
 export function listPodcasts() {
   return request<{ podcasts: Podcast[]; uses_default_password: boolean }>(
     "/api/admin/podcasts",

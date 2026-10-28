@@ -305,6 +305,7 @@ async def _collect_youtube_episodes(podcast: Podcast) -> list[dict]:
         **_youtube_base_options(),
     }
     base_options = _merge_yt_dlp_options(base_options, podcast.get("yt_dlp_options"))
+    base_options["logger"] = logging.getLogger("yt_dlp")
 
     # 第一步：扁平列表，只拿 id / 标题 / 缩略图，几秒钟就能返回
     info = await asyncio.to_thread(
@@ -579,6 +580,7 @@ def _run_youtube_download(
         **_youtube_base_options(),
     }
     options = _merge_yt_dlp_options(options, yt_dlp_options)
+    options["logger"] = logging.getLogger("yt_dlp")
 
     # yt-dlp 没给出 requested_downloads 时（例如目标文件已存在被直接跳过），
     # 与 bilix 那边走同一套兜底，避免把成功的下载记成失败。
