@@ -138,6 +138,17 @@ def test_queue_rejects_unmanaged_bad_targets_and_duplicate_requests(
     assert not service.busy()
 
 
+def test_non_managed_startup_reports_interrupted_operation_instead_of_spinning(
+    checkout,
+):
+    service = updates.UpdateService(checkout[0])
+    updates.write_json(service.repo.state_dir / "state.json", {"phase": "installing"})
+    status = service.status()
+    assert status["phase"] == "failed"
+    assert "中断" in status["message"]
+    assert not status["can_update"]
+
+
 def test_check_failure_does_not_advertise_cached_upgrade(checkout, monkeypatch):
     root, remote, _ = checkout
     commit(remote, "new version")

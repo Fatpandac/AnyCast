@@ -78,7 +78,15 @@ def command(args: list[str], cwd: Path, timeout: int = 30) -> str:
                 process.kill()
         except ProcessLookupError:
             pass
-        process.communicate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired as cleanup:
+            raise UpdateError("更新子进程停止超时，请检查服务器终端") from cleanup
+        finally:
+            if process.stdout:
+                process.stdout.close()
+            if process.stderr:
+                process.stderr.close()
         if isinstance(exc, subprocess.TimeoutExpired):
             raise UpdateError(f"{Path(args[0]).name} {args[1]} 执行超时") from exc
         raise
@@ -213,7 +221,8 @@ class UpdateService:
         ):
             self.requested = False
         return self.requested or (
-            self.managed() and operation.get("phase") in ACTIVE_PHASES
+            (self.managed() or bool(self.token))
+            and operation.get("phase") in ACTIVE_PHASES
         )
 
     def status(self) -> dict:
@@ -224,7 +233,12 @@ class UpdateService:
             reason = self.repo.eligibility(self.running_sha)
             if not self.managed():
                 reason = reason or "请用 uv run anycast 受管模式重启一次后再安装更新"
-            if self.busy():
+                if result["phase"] in ACTIVE_PHASES or self.requested:
+                    result.update(
+                        phase="failed",
+                        message="上次受管更新已中断，请用 uv run anycast 重启以恢复",
+                    )
+            elif self.busy():
                 reason = "应用更新中"
         except UpdateError as exc:
             reason = str(exc)
@@ -232,7 +246,7 @@ class UpdateService:
             result.update(can_update=False, reason=reason)
         if result.get("error"):
             result["can_update"] = False
-        if self.requested and result["phase"] not in ACTIVE_PHASES:
+        if self.requested and self.managed() and result["phase"] not in ACTIVE_PHASES:
             result["phase"] = "preparing"
         return result
 

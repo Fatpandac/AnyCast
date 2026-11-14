@@ -416,6 +416,85 @@ def test_cli_falls_back_to_read_only_update_mode_without_git(monkeypatch):
     assert calls == ["unmanaged"]
 
 
+@pytest.mark.parametrize("field", ["target", "previous", "operation_id"])
+def test_malformed_request_field_types_are_rejected_without_stopping(checkout, field):
+    runner, request = prepare(checkout)
+    try:
+        runner.upgrade({**request, field: []})
+        assert runner.events == []
+        assert runner.repo.head() == request["previous"]
+        assert updates.read_json(runner.directory / "state.json")["phase"] == "failed"
+    finally:
+        runner.release()
+
+
+def test_failed_recovery_does_not_leave_an_unverified_child_running(checkout):
+    runner, request = prepare(checkout)
+    runner.fail_health = 2
+    try:
+        runner.upgrade(request)
+        assert runner.events[-1] == "stop"
+        assert (
+            "恢复失败" in updates.read_json(runner.directory / "state.json")["message"]
+        )
+    finally:
+        runner.release()
+
+
+def test_recovery_resets_parent_sha_if_publishing_success_fails(checkout, monkeypatch):
+    runner, request = prepare(checkout)
+    original = runner.state
+
+    def state(phase, message):
+        if phase == "success":
+            raise OSError("state write failed")
+        original(phase, message)
+
+    monkeypatch.setattr(runner, "state", state)
+    try:
+        runner.upgrade(request)
+        assert runner.running_sha == request["previous"]
+        assert runner.repo.head() == request["previous"]
+        assert (
+            "已恢复旧版"
+            in updates.read_json(runner.directory / "state.json")["message"]
+        )
+    finally:
+        runner.release()
+
+
+def test_timeout_reaps_without_unbounded_pipe_drain(tmp_path, monkeypatch):
+    import io
+    import subprocess
+
+    class Process:
+        pid = 123
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        calls = 0
+        reaped = False
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if self.calls > 1:
+                raise AssertionError("a second communicate can block forever")
+            assert timeout is not None
+            raise subprocess.TimeoutExpired("fixture", timeout)
+
+        def wait(self, timeout=None):
+            assert timeout is not None
+            self.reaped = True
+            return -9
+
+    process = Process()
+    monkeypatch.setattr(updates.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(updates.os, "killpg", lambda *args: None)
+    with pytest.raises(updates.UpdateError, match="超时"):
+        updates.command(["fixture", "check"], tmp_path, timeout=1)
+    assert process.reaped
+    assert process.stdout.closed and process.stderr.closed
+
+
 def test_original_entrypoint_switches_to_supervisor():
     import tomllib
 

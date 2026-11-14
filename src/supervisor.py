@@ -194,7 +194,9 @@ class Supervisor:
 
     def restore_code(self, previous: str, target: str) -> None:
         if (
-            not SHA.fullmatch(previous)
+            not isinstance(previous, str)
+            or not isinstance(target, str)
+            or not SHA.fullmatch(previous)
             or not SHA.fullmatch(target)
             or self.repo.git("rev-parse", PREVIOUS_REF) != previous
             or self.repo.git("branch", "--show-current") != "main"
@@ -223,7 +225,11 @@ class Supervisor:
         try:
             prior = read_json(self.directory / "state.json")
             if (
-                request.get("token") != self.token
+                not all(
+                    isinstance(request.get(key), str)
+                    for key in ("token", "target", "previous", "operation_id")
+                )
+                or request.get("token") != self.token
                 or not SHA.fullmatch(request.get("target", ""))
                 or not SHA.fullmatch(request.get("previous", ""))
                 or not re.fullmatch(r"[0-9a-f]{32}", request.get("operation_id", ""))
@@ -275,8 +281,10 @@ class Supervisor:
                     self.sync()
                     self.start(verify=True)
                     self.wait_ready(request["previous"])
+                    self.running_sha = request["previous"]
                     message += "；已恢复旧版"
                 except (UpdateError, OSError) as recovery:
+                    self.stop(force=True)
                     message += f"；恢复失败，请人工处理：{recovery}"
             self.state("failed", message)
 

@@ -137,7 +137,7 @@ async def lifespan(_app: FastAPI):
     runtime_handler = start_runtime_log()
     download_tasks: list[asyncio.Task] = []
     started = False
-    verifying = update_service.managed() and os.getenv("ANYCAST_UPDATE_VERIFY") == "1"
+    verifying = bool(update_service.token) and os.getenv("ANYCAST_UPDATE_VERIFY") == "1"
     if verifying:
         downloader.pause_for_update()
 

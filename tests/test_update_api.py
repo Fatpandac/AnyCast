@@ -18,6 +18,7 @@ def service(checkout, monkeypatch):
     target = commit(remote, "new update")
     service = updates.UpdateService(root)
     monkeypatch.setattr(service, "managed", lambda: True)
+    monkeypatch.setattr(service, "token", "test-supervisor-token")
     monkeypatch.setattr(main, "update_service", service)
     monkeypatch.setattr(downloader, "_updates_paused", False)
     monkeypatch.setattr(downloader, "_active_downloads", 0)
@@ -232,6 +233,30 @@ def test_failed_readiness_file_write_cleans_up_lifespan(service, monkeypatch, tm
     assert not main._service_ready
     assert logging.getLogger().handlers == handlers
     assert stopped == [True]
+
+
+def test_parent_loss_during_verification_keeps_downloads_and_writes_paused(
+    service, monkeypatch, tmp_path
+):
+    import threading
+
+    instance, _ = service
+    started = threading.Event()
+    monkeypatch.setattr(instance, "managed", lambda: False)
+    monkeypatch.setattr(instance, "token", "lost-parent-token")
+    monkeypatch.setenv("ANYCAST_UPDATE_VERIFY", "1")
+    monkeypatch.setattr(main, "init_database", lambda: None)
+    monkeypatch.setattr(main, "start_cron_jobs", started.set)
+    monkeypatch.setattr(main, "stop_cron_jobs", lambda: None)
+    monkeypatch.setattr(main, "RUNTIME_LOG_PATH", tmp_path / "runtime.log")
+    monkeypatch.setattr(instance, "check", lambda: {})
+    updates.write_json(instance.repo.state_dir / "state.json", {"phase": "restarting"})
+    assert instance.busy()
+    with TestClient(main.app):
+        assert downloader.downloads_paused()
+        assert not started.wait(timeout=0.1)
+        assert not main.resume_update_gate()
+        assert instance.status()["phase"] == "failed"
 
 
 def test_queue_during_check_fails_without_waiting_or_leaving_gate_closed(service):
