@@ -6,6 +6,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import asyncio
 import os
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from urllib.parse import quote, urlsplit
@@ -48,7 +49,8 @@ from src.config import (
     update_admin_settings,
     update_podcast,
 )
-from src import passkeys
+from src import downloader, passkeys
+from src.updates import UpdateError, UpdateService, write_json
 from src.database import (
     count_episodes_by_podcast,
     get_episodes,
@@ -68,6 +70,27 @@ class PrivateRotatingFileHandler(RotatingFileHandler):
 
 log = logging.getLogger(__name__)
 _manual_updates: dict[str, asyncio.Task[None]] = {}
+update_service = UpdateService()
+_service_ready = False
+
+
+def resume_update_gate() -> bool:
+    if downloader.downloads_paused() and not update_service.busy():
+        downloader.resume_after_update()
+        return True
+    return False
+
+
+async def _check_updates_periodically() -> None:
+    while True:
+        if downloader.downloads_paused():
+            await asyncio.sleep(0.5)
+            continue
+        try:
+            await asyncio.to_thread(update_service.check)
+        except UpdateError as exc:
+            log.warning("检查应用更新失败：%s", exc)
+        await asyncio.sleep(3600)
 
 
 def _update_finished(name: str, task: asyncio.Task[None]) -> None:
@@ -104,26 +127,78 @@ def start_runtime_log() -> RotatingFileHandler:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    global _service_ready
+    _service_ready = False
     check_config_file()
     init_database()
     request_stop_reset()
+    downloader.resume_after_update()
     config = get_config()
     runtime_handler = start_runtime_log()
-    download_tasks = [
-        asyncio.create_task(run_downloader(podcast)) for podcast in config["podcasts"]
+    download_tasks: list[asyncio.Task] = []
+    started = False
+    verifying = update_service.managed() and os.getenv("ANYCAST_UPDATE_VERIFY") == "1"
+    if verifying:
+        downloader.pause_for_update()
+
+    def start_downloads() -> None:
+        nonlocal started
+        started = True
+        download_tasks.extend(
+            asyncio.create_task(run_downloader(podcast))
+            for podcast in config["podcasts"]
+        )
+        start_cron_jobs()
+
+    async def maintain_gate() -> None:
+        while True:
+            if resume_update_gate():
+                log.info(
+                    "应用更新状态：%s",
+                    update_service.operation().get("message", "已解除更新锁定"),
+                )
+                if not started:
+                    start_downloads()
+            await asyncio.sleep(0.5)
+
+    if not verifying:
+        start_downloads()
+    background = [
+        asyncio.create_task(_check_updates_periodically()),
+        asyncio.create_task(maintain_gate()),
     ]
-    start_cron_jobs()
-    yield
-    request_stop()
-    for task in [*download_tasks, *_manual_updates.values()]:
-        task.cancel()
-    await asyncio.gather(
-        *download_tasks, *_manual_updates.values(), return_exceptions=True
-    )
-    _manual_updates.clear()
-    stop_cron_jobs()
-    logging.getLogger().removeHandler(runtime_handler)
-    runtime_handler.close()
+    try:
+        _service_ready = True
+        if update_service.managed():
+            server = config.get("server", {})
+            host = server.get("host", "0.0.0.0")
+            host = (
+                "127.0.0.1"
+                if host in ("0.0.0.0", "localhost")
+                else "::1" if host == "::" else host
+            )
+            host = f"[{host}]" if ":" in host else host
+            write_json(
+                update_service.repo.state_dir / "ready.json",
+                {
+                    "token": update_service.token,
+                    "sha": update_service.running_sha,
+                    "url": f"http://{host}:{server.get('port', 8000)}/_internal/update-health",
+                },
+            )
+        yield
+    finally:
+        _service_ready = False
+        request_stop()
+        tasks = [*background, *download_tasks, *_manual_updates.values()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        _manual_updates.clear()
+        stop_cron_jobs()
+        downloader.resume_after_update()
+        logging.getLogger().removeHandler(runtime_handler)
+        runtime_handler.close()
 
 
 app = FastAPI(
@@ -256,6 +331,77 @@ async def admin_logs(
         raise HTTPException(status_code=422, detail="只能指定 before 或 after")
     response.headers["Cache-Control"] = "no-store"
     return _runtime_log_page(before, after)
+
+
+class InstallUpdatePayload(BaseModel):
+    target: str = Field(pattern=r"^[0-9a-f]{40}$")
+
+
+@app.get("/_internal/update-health", include_in_schema=False)
+async def update_health(request: Request):
+    if (
+        not update_service.token
+        or not update_service.managed()
+        or not secrets.compare_digest(
+            request.headers.get("X-AnyCast-Supervisor", "").encode(),
+            update_service.token.encode(),
+        )
+    ):
+        raise HTTPException(status_code=404, detail="Not Found")
+    return {"sha": update_service.running_sha, "ready": _service_ready}
+
+
+def _update_status(status: dict) -> dict:
+    if downloader.active_downloads():
+        return {
+            **status,
+            "can_update": False,
+            "reason": "正在下载或扫描，请完成后再更新",
+        }
+    return status
+
+
+@app.get("/api/admin/updates")
+async def admin_update_status(response: Response, _auth: None = Depends(require_admin)):
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return _update_status(await asyncio.to_thread(update_service.status))
+    except UpdateError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/api/admin/updates/check")
+async def admin_check_update(
+    request: Request, response: Response, _auth: None = Depends(require_admin)
+):
+    check_admin_request_origin(request, allow_during_update=True)
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return _update_status(await asyncio.to_thread(update_service.check))
+    except UpdateError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/api/admin/updates/install", status_code=202)
+async def admin_install_update(
+    payload: InstallUpdatePayload,
+    request: Request,
+    _auth: None = Depends(require_admin),
+):
+    check_admin_request_origin(request, allow_during_update=True)
+    if downloader.downloads_paused():
+        raise HTTPException(409, "应用更新中，请勿重复提交")
+    if not downloader.pause_for_update():
+        raise HTTPException(409, "正在下载或扫描，请完成后再更新")
+    try:
+        return update_service.queue(payload.target)
+    except UpdateError as exc:
+        downloader.resume_after_update()
+        raise HTTPException(409, str(exc)) from exc
+    except BaseException:
+        if not update_service.requested:
+            downloader.resume_after_update()
+        raise
 
 
 @app.get("/api/admin/settings")
@@ -476,6 +622,7 @@ def _require_strong_password() -> None:
 async def admin_passkey_registration_options(
     request: Request, _auth: None = Depends(require_admin)
 ):
+    check_admin_request_origin(request)
     _require_strong_password()
     return passkeys.registration_options(request)
 
@@ -486,6 +633,7 @@ async def admin_passkey_registration(
     request: Request,
     _auth: None = Depends(require_admin),
 ):
+    check_admin_request_origin(request)
     _require_strong_password()
     passkeys.register(request, payload.challenge, payload.credential)
     return get_admin_settings()["admin"]
@@ -493,6 +641,7 @@ async def admin_passkey_registration(
 
 @app.post("/api/admin/passkeys/login/options")
 async def admin_passkey_auth_options(request: Request):
+    check_admin_request_origin(request)
     return passkeys.authentication_options(request)
 
 
@@ -500,6 +649,7 @@ async def admin_passkey_auth_options(request: Request):
 async def admin_passkey_auth(
     payload: PasskeyCredentialPayload, request: Request, response: Response
 ):
+    check_admin_request_origin(request)
     session = passkeys.authenticate(request, payload.challenge, payload.credential)
     response.set_cookie(
         passkeys.COOKIE,

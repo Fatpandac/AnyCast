@@ -198,6 +198,7 @@ def test_interrupted_install_recovers_only_recorded_clean_target(checkout):
     try:
         other.recover_interrupted()
         assert other.repo.head() == request["previous"]
+        assert other.running_sha == request["previous"]
         assert other.events == ["sync"]
         assert "中断" in updates.read_json(other.directory / "state.json")["message"]
     finally:
@@ -313,6 +314,106 @@ def test_http_readiness_requires_expected_sha_without_redirects(
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_start_uses_fresh_python_and_preserves_cwd_and_private_session(
+    checkout, monkeypatch
+):
+    import sys
+
+    runner = supervisor.Supervisor(checkout[0], cwd=checkout[1])
+    runner.directory.mkdir(mode=0o700)
+    (runner.directory / "ready.json").write_text("stale")
+    calls = []
+    monkeypatch.setattr(supervisor, "command", lambda *args, **kwargs: sys.executable)
+    monkeypatch.setattr(
+        supervisor.subprocess,
+        "Popen",
+        lambda args, **kwargs: calls.append((args, kwargs)),
+    )
+    runner.start(verify=True)
+    args, kwargs = calls[0]
+    assert args == [sys.executable, "-m", "src.main"]
+    assert kwargs["cwd"] == checkout[1]
+    assert kwargs["env"]["ANYCAST_SUPERVISOR_TOKEN"] == runner.token
+    assert kwargs["env"]["ANYCAST_UPDATE_VERIFY"] == "1"
+    assert kwargs["start_new_session"] is True
+    assert not (runner.directory / "ready.json").exists()
+
+
+def test_stop_terminates_and_reaps_a_real_child(checkout):
+    import subprocess
+    import sys
+
+    runner = supervisor.Supervisor(checkout[0])
+    runner.child = subprocess.Popen(
+        [sys.executable, "-c", "import time;time.sleep(60)"], start_new_session=True
+    )
+    try:
+        runner.stop()
+        assert runner.child.poll() is not None
+    finally:
+        if runner.child.poll() is None:
+            runner.child.kill()
+            runner.child.wait()
+
+
+def test_run_processes_one_request_and_releases_owner(checkout, monkeypatch):
+    from types import SimpleNamespace
+
+    runner, request = prepare(checkout)
+    runner.release()
+    launches = []
+
+    def start(verify=False):
+        launches.append(verify)
+        polls = iter([None, None, 0])
+        monkeypatch.setattr(
+            runner, "child", SimpleNamespace(poll=lambda: next(polls, 0), returncode=0)
+        )
+        if not verify:
+            updates.write_json(runner.directory / "request.json", request)
+
+    monkeypatch.setattr(runner, "start", start)
+    monkeypatch.setattr(supervisor.signal, "signal", lambda *args: None)
+    assert runner.run() == 0
+    assert launches == [False, True]
+    assert runner.lock_fd is None
+    assert not (runner.directory / "owner.json").exists()
+    assert updates.read_json(runner.directory / "state.json")["phase"] == "success"
+
+
+def test_cli_keeps_private_logs_even_when_package_configured_root_logging(
+    checkout, monkeypatch
+):
+    runner = Harness(checkout[0])
+    monkeypatch.setattr(supervisor, "Supervisor", lambda: runner)
+
+    def run():
+        supervisor.log.info("private updater audit event")
+        return 0
+
+    monkeypatch.setattr(runner, "run", run)
+    with pytest.raises(SystemExit) as result:
+        supervisor.main()
+    assert result.value.code == 0
+    logfile = runner.directory / "update.log"
+    assert "private updater audit event" in logfile.read_text()
+    assert logfile.stat().st_mode & 0o777 == 0o600
+
+
+def test_cli_falls_back_to_read_only_update_mode_without_git(monkeypatch):
+    from src import main
+
+    calls = []
+
+    def unavailable():
+        raise updates.UpdateError("not a Git checkout")
+
+    monkeypatch.setattr(supervisor, "Supervisor", unavailable)
+    monkeypatch.setattr(main, "main", lambda: calls.append("unmanaged"))
+    supervisor.main()
+    assert calls == ["unmanaged"]
 
 
 def test_original_entrypoint_switches_to_supervisor():

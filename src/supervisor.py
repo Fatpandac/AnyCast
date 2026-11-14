@@ -39,6 +39,7 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
+# shortcut: the live parent keeps its loaded protocol; restart the launcher when updating supervisor logic.
 class Supervisor:
     def __init__(self, root: Path = ROOT, cwd: Path | None = None):
         self.repo = Repository(root)
@@ -214,6 +215,7 @@ class Supervisor:
         if state.get("phase") in {"installing", "restarting", "recovering"}:
             self.restore_code(state.get("previous", ""), state.get("target", ""))
             self.sync()
+        self.running_sha = self.repo.head()
         self.state("failed", "上次更新已中断，已取消遗留请求并恢复旧版代码")
 
     def upgrade(self, request: dict) -> None:
@@ -307,22 +309,32 @@ class Supervisor:
 
 
 def main() -> None:
-    if os.name != "posix":
-        raise SystemExit("受管更新仅支持 macOS/Linux；其他系统请用 uv run src/main.py")
     try:
+        if os.name != "posix" or not shutil.which("uv"):
+            raise UpdateError("受管更新需要 macOS/Linux 和 uv")
         runner = Supervisor()
+    except UpdateError as exc:
+        log.warning("在线安装不可用，使用普通服务模式：%s", exc)
+        from src.main import main as serve
+
+        serve()
+        return
+    try:
         runner.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(runner.directory, 0o700)
         logfile = runner.directory / "update.log"
         fd = os.open(logfile, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
         os.close(fd)
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s %(levelname)s %(message)s",
-            handlers=[
-                logging.FileHandler(logfile, encoding="utf-8"),
-                logging.StreamHandler(),
-            ],
-        )
-        raise SystemExit(runner.run())
+        os.chmod(logfile, 0o600)
+        handler = logging.FileHandler(logfile, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        log.addHandler(handler)
+        log.setLevel(logging.INFO)
+        try:
+            code = runner.run()
+        finally:
+            log.removeHandler(handler)
+            handler.close()
+        raise SystemExit(code)
     except (UpdateError, OSError) as exc:
         raise SystemExit(f"AnyCast 启动/更新失败：{exc}") from exc

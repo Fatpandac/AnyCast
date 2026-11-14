@@ -154,6 +154,7 @@ def test_admin_can_read_persisted_errors_only_after_login(monkeypatch, tmp_path)
     monkeypatch.setattr(main, "init_database", lambda: None)
     monkeypatch.setattr(main, "start_cron_jobs", lambda: None)
     monkeypatch.setattr(main, "stop_cron_jobs", lambda: None)
+    monkeypatch.setattr(main.update_service, "check", lambda: {})
     monkeypatch.setenv("ANYCAST_ADMIN_PASSWORD", "secret")
 
     with TestClient(main.app) as client:

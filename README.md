@@ -15,7 +15,7 @@ A generator for creating podcasts from Bilibili and YouTube playlists.
 export ANYCAST_ADMIN_PASSWORD='请替换为强密码'
 # 可选，默认用户名为 admin
 export ANYCAST_ADMIN_USERNAME='admin'
-uv run src/main.py
+uv run anycast
 ```
 
 后台修改密码后立即生效，无需重启；新密码只以加盐 PBKDF2 哈希保存在本机 `config.yaml` 的 `admin.password_hash`，优先于环境变量。如忘记密码，可停机后手动删除该字段，重启后使用环境变量密码（或默认密码）登录并立即重新设置。请勿将 `config.yaml` 分享给他人。
@@ -34,6 +34,30 @@ pnpm build     # 生产文件输出到 src/admin_static
 ```
 
 管理后台支持 HTTP Basic 密码登录，也可在「设置 → Passkey 登录」填写并保存自己的 HTTPS 域名（例如 `https://example.com`），再用该域名打开后台注册 Passkey。注册前必须修改默认管理员密码。注册第一个 Passkey 后，通过 `/admin/login` 可使用设备验证登录；密码登录始终保留为恢复方式。更换或清空域名会移除已有 Passkey 并使 Passkey 会话失效，需要重新注册。反向代理必须保留原始 `Host` 头，且 Passkey 的注册及登录请求必须来自配置的 HTTPS 域名；多进程部署需要共享挑战存储（当前仅支持单 worker）。请妥善保管 `config.yaml`（其中保存 Passkey 公钥和会话签名密钥）。部署到公网时必须先替换默认密码，并放在 HTTPS 反向代理后，不要通过明文 HTTP 传输密码。使用默认密码时，后台会显示警告；虽然也能编辑 Cookie 文件，但已知默认密码的任何人都可能读取其中的敏感凭据。
+
+## 应用更新
+
+在 Git 源码目录中使用 `uv run anycast` 启动，会由轻量管理进程托管服务。首次安装此功能后，请先手动停止旧服务，再用该命令启动一次。
+
+设置页的「应用更新」跟随固定仓库 `Fatpandac/AnyCast` 的 `main` 分支，使用提交 SHA 标识版本。服务启动后及每小时检查一次，也可点击「检查更新」（一分钟内复用检查结果）。只有发现可快进的新提交时，才提供「更新并重启」，不会自动无人值守安装。安装前会再次核对确认过的 SHA；main 若又有新提交，需要重新检查确认。
+
+一键安装仅支持 macOS/Linux、单 worker、可写且无未提交修改的 main 工作区，并需要 Git 和 uv。正在下载或扫描、分支分叉、本地领先或运行版本与工作树不同，都不会强制覆盖。更新时暂时禁止新下载和配置写入，保留 `config.yaml`、`database.db`、Cookie 文件及已下载音频；使用仓库已提交的前端构建产物，不要求部署机器安装 pnpm。
+
+更新流程会先备份配置和 SQLite 数据库，再停止子进程、快进代码、运行 `uv sync --locked`、重启并核对 HTTP 就绪状态和运行 SHA。失败会尝试恢复旧提交及依赖；恢复失败时请查看服务器终端。管理进程自身的更新日志、状态和私有备份保存在以下目录，不对网页静态服务开放：
+
+```bash
+git rev-parse --git-path anycast-updates
+# update.log：管理进程日志；state.json：阶段、原提交、目标提交及失败原因
+# backups/<operation_id>/：config.yaml 和 database.db 的安装前备份
+```
+
+服务短暂断开时，设置页会自动重连并核对目标版本；重连超时不代表安装已经停止，请查看终端或手动检查状态，勿同时操作 Git 或重复启动应用。进程被异常终止后，下次受管启动会拒绝重放旧请求；对已开始的安装尝试安全恢复，遇到本地修改会停止并要求人工处理。
+
+如需人工恢复，先停止管理进程，检查 `git status` 和私有 `state.json` 中的 `previous`、`target`。**不要对有本地修改的工作区执行强制 reset/clean**。确认当前 HEAD、原提交及备份后自行恢复代码，执行 `uv sync --locked`，再运行 `uv run anycast`；涉及数据恢复时先另行备份当前数据库。
+
+管理进程在升级期间保持运行，因此更新协议须向后兼容；涉及管理进程自身逻辑的变更，需要手动重启一次 `uv run anycast` 才生效。缺少 Git、uv 或在不支持的系统上启动时，会回退到普通服务模式，并在更新区说明安装不可用。
+
+自动回退不能保证修复网络或依赖安装故障，也不支持不可逆的数据库/配置迁移；main 上的后续变更须保持向后兼容。更新相当于授权可信 main 代码在本机执行，请保护管理员账号及仓库权限。Docker、Windows、多 worker 或非 Git 安装应由外部部署工具更新；直接运行 `uv run src/main.py` 仍可使用后台，但不能在页面安装更新。
 
 ## API
 
@@ -79,7 +103,7 @@ Linux 或其他系统请使用对应包管理器安装 `ffmpeg`，并确保 `ffm
 
 ```bash
 uv sync --group dev
-uv run src/main.py
+uv run anycast
 ```
 
 如果只需要运行测试：

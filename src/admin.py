@@ -158,10 +158,19 @@ def require_admin(
         )
 
 
-def check_admin_request_origin(request: Request) -> None:
+def check_admin_request_origin(
+    request: Request, *, allow_during_update: bool = False
+) -> None:
     origin = request.headers.get("origin")
     if origin and urlsplit(origin).netloc != request.headers.get("host"):
         raise HTTPException(status_code=403, detail="拒绝跨站管理请求")
+    if not allow_during_update and request.method not in ("GET", "HEAD", "OPTIONS"):
+        from src.downloader import downloads_paused
+
+        if downloads_paused():
+            raise HTTPException(
+                status_code=503, detail="应用更新中，暂时不能修改配置或启动任务"
+            )
 
 
 def uses_default_admin_password() -> bool:

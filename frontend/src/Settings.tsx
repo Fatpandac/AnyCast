@@ -3,6 +3,7 @@ import { ArrowLeft, LoaderCircle, Save } from "lucide-react"
 
 import { changeAdminPassword, getCookieFile, getRuntimeLog, getSettings, saveCookieFile, savePasskeyOrigin, saveSettings, type Settings } from "@/api"
 import { registerPasskey } from "@/passkeys"
+import { ApplicationUpdates } from "@/Updates"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
@@ -326,6 +327,7 @@ export function SettingsPage({ goBack }: { goBack: () => void }) {
             {passkeyError && <Alert role="alert" className="border-destructive/40 bg-destructive/5 text-destructive"><AlertDescription>{passkeyError}</AlertDescription></Alert>}
           </div>
         </section>
+        <ApplicationUpdates />
         <section aria-labelledby="runtime-log-title" className="relative left-1/2 grid w-[min(95vw,70rem)] -translate-x-1/2 gap-3 border-t py-4">
           <div className="flex items-center justify-between gap-3">
             <div className="space-y-1">

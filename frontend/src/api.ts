@@ -40,7 +40,7 @@ export async function request<T>(url: string, options?: RequestInit): Promise<T>
         : Array.isArray(detail)
           ? detail.map((item) => item?.msg).filter(Boolean).join("；")
           : `请求失败（${response.status}）`
-    throw new Error(message)
+    throw Object.assign(new Error(message), { status: response.status })
   }
   return response.json() as Promise<T>
 }
@@ -79,6 +79,34 @@ export function saveCookieFile(path: string, content: string, revision: string) 
   return request<{ revision: string }>("/api/admin/settings/cookies", {
     method: "PUT", body: JSON.stringify({ path, content, revision }),
   })
+}
+
+export type UpdateStatus = {
+  current_sha: string | null
+  latest_sha: string | null
+  latest_message: string
+  latest_date: string | null
+  checked_at: string | null
+  relation: "unknown" | "current" | "behind" | "ahead" | "diverged"
+  update_available: boolean
+  can_update: boolean
+  reason: string
+  error: string
+  phase: "idle" | "preparing" | "installing" | "restarting" | "recovering" | "success" | "failed"
+  target?: string
+  message?: string
+}
+
+export function getUpdateStatus() {
+  return request<UpdateStatus>("/api/admin/updates", { cache: "no-store", signal: AbortSignal.timeout(5000) })
+}
+
+export function checkApplicationUpdate() {
+  return request<UpdateStatus>("/api/admin/updates/check", { method: "POST", cache: "no-store", signal: AbortSignal.timeout(35000) })
+}
+
+export function installApplicationUpdate(target: string) {
+  return request<UpdateStatus>("/api/admin/updates/install", { method: "POST", body: JSON.stringify({ target }), signal: AbortSignal.timeout(10000) })
 }
 
 export type RuntimeLogPage = { lines: string[]; before: string | null; after: string | null }

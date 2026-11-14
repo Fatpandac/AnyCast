@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 from datetime import datetime, timezone
+from functools import cached_property
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -97,7 +98,7 @@ class Repository:
     def git(self, *args: str) -> str:
         return command(["git", *args], self.root)
 
-    @property
+    @cached_property
     def state_dir(self) -> Path:
         path = Path(self.git("rev-parse", "--git-path", "anycast-updates"))
         return path if path.is_absolute() else self.root / path
@@ -248,7 +249,9 @@ class UpdateService:
             return self.status()
 
     def queue(self, target: str) -> dict:
-        with self.lock:
+        if not self.lock.acquire(blocking=False):
+            raise UpdateError("正在检查更新，请稍后重试")
+        try:
             if self.busy():
                 raise UpdateError("应用更新中，请勿重复提交")
             if not self.managed():
@@ -279,3 +282,5 @@ class UpdateService:
                 "target": target,
                 "can_update": False,
             }
+        finally:
+            self.lock.release()

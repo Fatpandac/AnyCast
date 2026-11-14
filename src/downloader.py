@@ -39,6 +39,8 @@ logging.getLogger("yt_dlp").setLevel(logging.WARNING)
 _cancel_downloads = threading.Event()
 # shortcut: same-podcast serialization is process-local; use a shared queue with multiple workers.
 _podcast_locks: dict[str, asyncio.Lock] = {}
+_updates_paused = False
+_active_downloads = 0
 
 DOWNLOADS_DIR = Path("downloads")
 # keep_latest 未配置时，首次抓取的集数上限（之后只跟进新发布的剧集）
@@ -755,10 +757,40 @@ async def __run(podcast: Podcast):
     _cancel_downloads.clear()
 
 
+def active_downloads() -> int:
+    return _active_downloads
+
+
+def downloads_paused() -> bool:
+    return _updates_paused
+
+
+def pause_for_update() -> bool:
+    global _updates_paused
+    if _active_downloads:
+        return False
+    _updates_paused = True
+    return True
+
+
+def resume_after_update() -> None:
+    global _updates_paused
+    _updates_paused = False
+
+
 async def run_downloader(podcast: Podcast) -> None:
-    lock = _podcast_locks.setdefault(podcast["name"], asyncio.Lock())
-    async with lock:
-        await __run(podcast)
+    global _active_downloads
+    # Gate and count before the first await, on the application's event loop.
+    if _updates_paused:
+        log.info("应用更新中，跳过下载：%s", podcast["name"])
+        return
+    _active_downloads += 1
+    try:
+        lock = _podcast_locks.setdefault(podcast["name"], asyncio.Lock())
+        async with lock:
+            await __run(podcast)
+    finally:
+        _active_downloads -= 1
 
 
 def request_stop() -> None:
