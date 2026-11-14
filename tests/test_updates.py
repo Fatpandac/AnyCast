@@ -126,6 +126,16 @@ def test_queue_rejects_unmanaged_bad_targets_and_duplicate_requests(
         json.loads((service.repo.state_dir / "request.json").read_text())["target"]
         == new
     )
+    updates.write_json(
+        service.repo.state_dir / "state.json",
+        {
+            "operation_id": request["operation_id"],
+            "phase": "failed",
+            "message": "请重新检查",
+        },
+    )
+    assert service.status()["phase"] == "failed"
+    assert not service.busy()
 
 
 def test_check_failure_does_not_advertise_cached_upgrade(checkout, monkeypatch):

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -55,18 +56,38 @@ def command(args: list[str], cwd: Path, timeout: int = 30) -> str:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update(GIT_TERMINAL_PROMPT="0", GIT_SSH_COMMAND="ssh -oBatchMode=yes")
     try:
-        result = subprocess.run(
-            args, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout
+        process = subprocess.Popen(
+            args,
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise UpdateError(f"{Path(args[0]).name} {args[1]} 无法执行或超时") from exc
-    if result.returncode:
+    except OSError as exc:
+        raise UpdateError(f"{Path(args[0]).name} {args[1]} 无法执行") from exc
+    try:
+        stdout, _stderr = process.communicate(timeout=timeout)
+    except BaseException as exc:
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except ProcessLookupError:
+            pass
+        process.communicate()
+        if isinstance(exc, subprocess.TimeoutExpired):
+            raise UpdateError(f"{Path(args[0]).name} {args[1]} 执行超时") from exc
+        raise
+    if process.returncode:
         # Do not expose command output: dependency URLs may contain credentials.
         operation = "fetch" if "fetch" in args else args[1]
         raise UpdateError(
-            f"{Path(args[0]).name} {operation} 失败（退出码 {result.returncode}）"
+            f"{Path(args[0]).name} {operation} 失败（退出码 {process.returncode}）"
         )
-    return result.stdout.strip()
+    return stdout.strip()
 
 
 class Repository:
@@ -152,6 +173,7 @@ class UpdateService:
         self.lock = threading.Lock()
         self.last_check = 0.0
         self.requested = False
+        self.request_id = ""
         self.cached: dict = {
             "current_sha": self.running_sha,
             "latest_sha": None,
@@ -182,8 +204,15 @@ class UpdateService:
         }
 
     def busy(self) -> bool:
+        operation = self.operation()
+        if (
+            self.requested
+            and operation.get("operation_id") == self.request_id
+            and operation.get("phase") not in ACTIVE_PHASES
+        ):
+            self.requested = False
         return self.requested or (
-            self.managed() and self.operation().get("phase") in ACTIVE_PHASES
+            self.managed() and operation.get("phase") in ACTIVE_PHASES
         )
 
     def status(self) -> dict:
@@ -233,13 +262,14 @@ class UpdateService:
                 )
             import secrets
 
+            self.request_id = secrets.token_hex(16)
             write_json(
                 self.repo.state_dir / "request.json",
                 {
                     "token": self.token,
                     "target": target,
                     "previous": self.running_sha,
-                    "operation_id": secrets.token_hex(16),
+                    "operation_id": self.request_id,
                 },
             )
             self.requested = True
