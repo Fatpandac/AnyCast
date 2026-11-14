@@ -175,7 +175,7 @@ export function Dashboard({ openPodcast, openSettings }: { openPodcast: (name: s
             setAddOpen(true)
           } else closeForm()
         }}>
-          <Card>
+          <Card className="min-w-0">
             <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
               <div className="space-y-1.5"><CardTitle>播客</CardTitle><CardDescription>点击播客查看下载记录和内容详情。</CardDescription></div>
               <DialogTrigger asChild><Button className="shrink-0"><Plus />添加播客</Button></DialogTrigger>
@@ -203,13 +203,13 @@ export function Dashboard({ openPodcast, openSettings }: { openPodcast: (name: s
                         }
                       }}
                     >
-                      <TableCell className="min-w-64">
-                        <span className="block font-medium text-primary">{podcast.name}</span>
-                        <span className="block max-w-md truncate text-xs text-muted-foreground" title={podcast.url}>{podcast.url}</span>
+                      <TableCell className="w-full min-w-48 max-w-0">
+                        <span className="block truncate font-medium text-primary" title={podcast.name}>{podcast.name}</span>
+                        <span className="block truncate text-xs text-muted-foreground" title={podcast.url}>{podcast.url}</span>
                       </TableCell>
-                      <TableCell><Badge>{podcast.episode_count || 0} 集</Badge></TableCell>
-                      <TableCell className="whitespace-nowrap">{describeSchedule(podcast.update_period_cron)}</TableCell>
-                      <TableCell>{podcast.keep_latest ?? "全部"}</TableCell>
+                      <TableCell className="whitespace-nowrap tabular-nums"><Badge>{podcast.episode_count || 0} 集</Badge></TableCell>
+                      <TableCell className="whitespace-nowrap tabular-nums">{describeSchedule(podcast.update_period_cron)}</TableCell>
+                      <TableCell className="whitespace-nowrap tabular-nums">{podcast.keep_latest ?? "全部"}</TableCell>
                       <TableCell onClick={(event) => event.stopPropagation()}>
                         <div className="flex justify-end gap-1">
                           <Button size="sm" variant="ghost" aria-label={`立即更新 ${podcast.name}`} disabled={updating === podcast.name} onClick={() => void updateNow(podcast.name)}>{updating === podcast.name ? <LoaderCircle className="animate-spin" /> : <RotateCw />}立即更新</Button>

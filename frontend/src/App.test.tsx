@@ -49,6 +49,23 @@ describe("AnyCast admin", () => {
     expect(screen.getByRole("heading", { name: "播客" })).toBeInTheDocument()
   })
 
+  it("keeps compact table fields on one line and lets long sources shrink", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => jsonResponse({
+      podcasts: [{ ...podcast, episode_count: 1000, keep_latest: null, url: `${podcast.url}${"x".repeat(200)}` }],
+      uses_default_password: false,
+    })))
+
+    render(<App />)
+    const row = await screen.findByRole("row", { name: "查看 weekly" })
+    for (const header of screen.getAllByRole("columnheader")) {
+      expect(header).toHaveClass("whitespace-nowrap")
+    }
+    expect(within(row).getByText("1000 集")).toHaveClass("whitespace-nowrap")
+    expect(within(row).getByText("全部")).toHaveClass("whitespace-nowrap", "tabular-nums")
+    expect(within(row).getAllByRole("cell")[0]).toHaveClass("max-w-0")
+    expect(within(row).getByText("weekly")).toHaveClass("truncate")
+  })
+
   it("starts an update for just the selected podcast without opening its details", async () => {
     const fetch = vi.fn()
       .mockImplementationOnce(() => jsonResponse({ podcasts: [podcast], uses_default_password: false }))
