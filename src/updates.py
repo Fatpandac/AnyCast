@@ -161,7 +161,12 @@ class Repository:
         return {
             "current_sha": running_sha,
             "latest_sha": latest,
-            "latest_message": self.git("show", "-s", "--format=%s", latest),
+            "latest_message": self.git(
+                "log",
+                "--topo-order",
+                "--format=%h · %cI%n%B",
+                f"{running_sha}..{latest}",
+            ),
             "latest_date": self.git("show", "-s", "--format=%cI", latest),
             "checked_at": datetime.now(timezone.utc).isoformat(),
             "relation": relation,

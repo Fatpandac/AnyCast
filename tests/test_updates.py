@@ -45,14 +45,67 @@ def test_checks_real_main_history_and_pins_running_version(checkout):
     root, remote, old = checkout
     repo = updates.Repository(root)
     assert repo.check(old)["relation"] == "current"
+    assert repo.check(old)["latest_message"] == ""
     new = commit(remote, "new version")
     result = repo.check(old)
     assert result["latest_sha"] == new
-    assert result["latest_message"] == "new version"
+    assert "new version" in result["latest_message"]
+    assert new[:7] in result["latest_message"]
     assert result["relation"] == "behind"
     assert result["update_available"] is True
     git(root, "merge", "--ff-only", new)
     assert repo.check(old)["reason"] == "运行版本与工作树不一致，请先重启服务"
+
+
+def test_update_notes_include_the_entire_commit_range_and_merge_history(checkout):
+    root, remote, old = checkout
+    first = commit(remote, "First change\n\n完整说明第一行\n完整说明第二行")
+    git(remote, "checkout", "-b", "feature")
+    (remote / "feature.txt").write_text("feature")
+    git(remote, "add", "feature.txt")
+    git(
+        remote,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-qm",
+        "Side branch change",
+    )
+    side = git(remote, "rev-parse", "HEAD")
+    git(remote, "checkout", "main")
+    second = commit(remote, "Second change\n\nDetails must not be truncated")
+    git(
+        remote,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "merge",
+        "--no-ff",
+        "feature",
+        "-m",
+        "Merge feature\n\nMerge details",
+    )
+    latest = git(remote, "rev-parse", "HEAD")
+
+    notes = updates.Repository(root).check(old)["latest_message"]
+    for sha, subject in [
+        (first, "First change"),
+        (side, "Side branch change"),
+        (second, "Second change"),
+        (latest, "Merge feature"),
+    ]:
+        assert sha[:7] in notes
+        assert subject in notes
+        assert git(remote, "show", "-s", "--format=%cI", sha) in notes
+    assert "完整说明第一行\n完整说明第二行" in notes
+    assert "Details must not be truncated" in notes
+    assert "Merge details" in notes
+    assert "initial" not in notes
+    assert old[:7] not in notes
+    assert notes.index(latest[:7]) < notes.index(second[:7]) < notes.index(first[:7])
 
 
 @pytest.mark.parametrize("kind", ["tracked", "staged", "untracked"])
@@ -74,9 +127,14 @@ def test_ahead_diverged_and_wrong_branch_are_not_overwritten(checkout):
     root, remote, _ = checkout
     local = commit(root, "local version")
     repo = updates.Repository(root)
-    assert repo.check(local)["relation"] == "ahead"
+    ahead = repo.check(local)
+    assert ahead["relation"] == "ahead"
+    assert ahead["latest_message"] == ""
     commit(remote, "remote version")
-    assert repo.check(local)["relation"] == "diverged"
+    diverged = repo.check(local)
+    assert diverged["relation"] == "diverged"
+    assert "remote version" in diverged["latest_message"]
+    assert "local version" not in diverged["latest_message"]
     git(root, "checkout", "-b", "feature")
     assert "main" in repo.check(local)["reason"]
 

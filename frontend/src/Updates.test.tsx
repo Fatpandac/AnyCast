@@ -9,7 +9,7 @@ vi.mock("./api", () => ({ getUpdateStatus: vi.fn(), checkApplicationUpdate: vi.f
 const current = "a".repeat(40)
 const target = "b".repeat(40)
 const idle: UpdateStatus = {
-  current_sha: current, latest_sha: current, latest_message: "Existing version", latest_date: "2026-11-15T00:00:00Z",
+  current_sha: current, latest_sha: current, latest_message: "", latest_date: "2026-11-15T00:00:00Z",
   checked_at: "2026-11-15T00:00:00Z", relation: "current", update_available: false,
   can_update: false, reason: "", error: "", phase: "idle",
 }
@@ -35,6 +35,18 @@ it("checks main and displays a pinned commit with the update button", async () =
   expect(await screen.findByText("Fix downloads")).toBeInTheDocument()
   expect(screen.getByRole("button", { name: "更新并重启" })).toBeEnabled()
   expect(screen.getByRole("link", { name: target.slice(0, 7) })).toHaveAttribute("href", `https://github.com/Fatpandac/AnyCast/commit/${target}`)
+})
+
+it("preserves all commit messages and line breaks in a keyboard-scrollable update history", async () => {
+  const notes = "bbbbbbb · 2026-11-15T12:00:00Z\nLatest change\n\nFull latest body\n<button>plain commit text</button>\n\nccccccc · 2026-11-14T12:00:00Z\nEarlier change\n\n完整的早期提交说明"
+  vi.mocked(getUpdateStatus).mockResolvedValue({ ...available, latest_message: notes })
+  render(<ApplicationUpdates />)
+  const history = await screen.findByRole("region", { name: "待更新提交说明" })
+  expect(history.textContent).toBe(notes)
+  expect(history).toHaveClass("whitespace-pre-wrap", "overflow-y-auto", "max-h-80")
+  expect(history).toHaveAttribute("tabindex", "0")
+  expect(history.querySelector("button")).toBeNull()
+  expect(screen.queryByText("最新提交说明")).not.toBeInTheDocument()
 })
 
 it("requires confirmation and reconnects until the target SHA is running", async () => {

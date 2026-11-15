@@ -126,7 +126,10 @@ export function ApplicationUpdates() {
     <dl className="grid gap-4 rounded-lg border bg-card p-4 sm:grid-cols-2">
       <div className="space-y-1"><dt className="text-sm text-muted-foreground">当前运行提交</dt><dd>{commitLink(status?.current_sha)}</dd></div>
       <div className="space-y-1"><dt className="text-sm text-muted-foreground">最新 main 提交</dt><dd>{status?.latest_sha ? commitLink(status.latest_sha) : "尚未检查"}</dd></div>
-      {status?.latest_message && <div className="min-w-0 space-y-1 sm:col-span-2"><dt className="text-sm text-muted-foreground">最新提交说明</dt><dd className="break-words text-sm">{status.latest_message}</dd>{status.latest_date && <dd className="text-xs text-muted-foreground">{new Date(status.latest_date).toLocaleString()}</dd>}</div>}
+      {status?.latest_message && <div className="min-w-0 space-y-1 sm:col-span-2">
+        <dt className="text-sm text-muted-foreground">待更新提交说明</dt>
+        <dd role="region" aria-label="待更新提交说明" tabIndex={0} className="max-h-80 overflow-y-auto whitespace-pre-wrap break-words rounded-sm text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{status.latest_message}</dd>
+      </div>}
     </dl>
     {failure && <Alert role="alert" className="border-destructive/40 bg-destructive/5 text-destructive"><AlertDescription>{failure}</AlertDescription></Alert>}
     <div aria-live="polite" className="space-y-2 text-sm">
