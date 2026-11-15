@@ -93,6 +93,8 @@ pre-commit install
 
 ## 运行
 
+需要 Python 3.11 或更新版本（新版 yt-dlp 的最低要求）。YouTube 下载器使用已验证兼容的 `yt-dlp>=2026.10.26`；部署和在线更新均以 `uv.lock` 为准，不要只在虚拟环境中手动升级后继续使用旧锁文件。
+
 YouTube 音频提取依赖 `ffmpeg`。macOS 可通过 Homebrew 安装：
 
 ```bash
