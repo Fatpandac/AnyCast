@@ -93,15 +93,32 @@ pre-commit install
 
 ## 运行
 
-需要 Python 3.11 或更新版本（新版 yt-dlp 的最低要求）。YouTube 下载器使用已验证兼容的 `yt-dlp>=2026.10.26`；部署和在线更新均以 `uv.lock` 为准，不要只在虚拟环境中手动升级后继续使用旧锁文件。
+需要 Python 3.11 或更新版本。YouTube 解析和下载调用外部 `yt-dlp`，不再安装项目内的 `yt-dlp` / `yt-dlp-ejs` Python 依赖。执行前会检查可执行文件及版本（最低 `2026.10.26`），日志记录实际路径和版本；缺失、版本无法识别或过旧会明确报错，不会回退到 Python 库。
 
-YouTube 音频提取依赖 `ffmpeg`。macOS 可通过 Homebrew 安装：
+macOS 可通过 Homebrew 安装 YouTube 所需工具（`ffmpeg` / `ffprobe` 用于提取音频）：
 
 ```bash
-brew install ffmpeg
+brew install yt-dlp ffmpeg node
+# yt-dlp 可独立升级，无需更新项目或重启服务
+brew upgrade yt-dlp
 ```
 
-Linux 或其他系统请使用对应包管理器安装 `ffmpeg`，并确保 `ffmpeg` 在 `PATH` 中。
+Linux 或其他系统请安装外部 `yt-dlp`、`ffmpeg`（含 `ffprobe`）和 Node.js，确保它们在服务的 `PATH` 中。外部 yt-dlp 的 EJS 组件及运行环境由它自己的安装方式管理，不由项目锁文件管理。若安装的是不包含 EJS 的官方可执行文件，请按 yt-dlp 官方文档配置 EJS。
+
+可在 `config.yaml` 的现有 `youtube` 节点添加：
+
+```yaml
+youtube:
+  executable: yt-dlp  # 默认从 PATH 查找；建议多环境部署时明确指定外部命令的绝对路径
+  auto_update: false
+  # cookies_file: /path/to/cookies.txt
+```
+
+`auto_update: true` 会在首次使用及之后最多每 24 小时调用一次官方 `yt-dlp --update`（仅当前进程内无 yt-dlp 任务时尝试；重启后重新计时），然后重新检查版本。升级失败会记录警告：当前版本仍兼容时继续，否则停止本次操作。默认关闭，不会自动提权或运行任意升级脚本。**Homebrew、pip 等包管理器安装通常不支持官方自更新**，请使用安装时的工具升级，例如 `brew upgrade yt-dlp`；要使用应用内自动升级，请使用支持 `--update` 且当前用户有写权限的官方独立可执行文件。配置只在 YAML 中提供，后台保存 Cookie 设置会保留这些字段。
+
+迁移后首次执行 `uv sync --locked` 会清理旧虚拟环境中的 yt-dlp，因此请先安装好外部版本，避免 PATH 仍指向即将移除的 `.venv/bin/yt-dlp`。项目更新不会升级或降级外部 yt-dlp，项目回退也不会回退它。
+
+播客级 `yt_dlp_options` 仍使用常用 Python API 风格键名，包括 `extractor_args`、`proxy`、`format`、`cookiefile`、`cookiesfrombrowser`、`http_headers`、`js_runtimes`、重试/超时/限速参数，以及 `FFmpegExtractAudio` 后处理。未知参数或不支持的参数类型会报错，不再承诺支持所有 Python API 选项。Cookie 文件仍为每个任务复制隔离；下载错误或缺失分片不会作为成功写入数据库。
 
 ```bash
 uv sync --group dev

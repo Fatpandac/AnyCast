@@ -6,10 +6,13 @@ server:
 # admin:
 #   passkey_origin: https://example.com
 
-# YouTube cookies 配置（二选一），用于绕过 bot 检测
+# YouTube 下载器独立于项目 Python 环境，执行前会检查外部命令和版本。
 # youtube:
-#   cookies_file: /path/to/cookies.txt   # 从文件读取 cookies
-#   cookies_from_browser: chrome         # 从浏览器读取（chrome/firefox/safari 等）
+#   executable: yt-dlp                  # 默认从 PATH 查找，也可填写外部命令的绝对路径
+#   auto_update: false                  # 开启后首次使用及之后最多每 24 小时尝试一次官方自更新
+#                                      # 仅空闲时升级；Homebrew/pip 安装请用对应包管理器维护
+#   cookies_file: /path/to/cookies.txt   # cookies 二选一，用于绕过 bot 检测
+#   cookies_from_browser: chrome        # 从浏览器读取（chrome/firefox/safari 等）
 
 # podcasts 中除 name / url / update_period_cron 外均为可选：
 #   keep_latest  只保留最新 N 集，多余的连同文件一起删除；
@@ -20,8 +23,9 @@ server:
 #   sort_by      默认 date
 #   sort_order   默认 desc。同时表示播放列表自身的顺序：desc 取列表头部，
 #                asc 取列表尾部。列表若是旧到新排列，这里要写 asc
-#   yt_dlp_options  透传给 yt-dlp 的额外参数（YoutubeDL Python API 的参数名），
-#                   会覆盖内置默认值；extractor_args 这类嵌套字典是合并而非整个替换。
+#   yt_dlp_options  保留常用 Python API 风格参数，由项目转换为外部命令参数；
+#                   支持 extractor_args、proxy、format、cookiefile、重试/超时等，
+#                   不支持的参数会明确报错，不会静默忽略。extractor_args 按提取器合并。
 #                   命令行的 --extractor-args youtube:player-client=default,-tv
 #                   对应下面 youtube1 的写法（横杠换成下划线，逗号列表换成 YAML 数组）
 podcasts:

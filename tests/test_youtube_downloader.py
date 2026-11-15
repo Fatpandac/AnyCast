@@ -19,6 +19,14 @@ def _youtube_podcast() -> Podcast:
     }
 
 
+def _stub_extractor(monkeypatch, fake):
+    monkeypatch.setattr(
+        downloader,
+        "_extract_youtube_info",
+        lambda url, download, options: fake(options).extract_info(url, download),
+    )
+
+
 def _stub_meta_cache(monkeypatch, cached=None):
     """屏蔽元数据缓存，避免单测碰到真实的 database.db。"""
     monkeypatch.setattr(downloader, "get_cached_episode_meta", lambda ids: cached or {})
@@ -48,10 +56,16 @@ def test_youtube_playlist_entries_are_collected(monkeypatch):
             "description": "Channel description",
             "thumbnail": "https://img.example/channel.jpg",
             "entries": [
-                {"id": "newer", "title": "Newer video",
-                 "webpage_url": "https://www.youtube.com/watch?v=newer"},
-                {"id": "older", "title": "Older video",
-                 "url": "https://www.youtube.com/watch?v=older"},
+                {
+                    "id": "newer",
+                    "title": "Newer video",
+                    "webpage_url": "https://www.youtube.com/watch?v=newer",
+                },
+                {
+                    "id": "older",
+                    "title": "Older video",
+                    "url": "https://www.youtube.com/watch?v=older",
+                },
             ],
         }
         DETAILS = {
@@ -94,7 +108,7 @@ def test_youtube_playlist_entries_are_collected(monkeypatch):
             }
         )
 
-    monkeypatch.setattr(downloader, "YoutubeDL", FakeYoutubeDL, raising=False)
+    _stub_extractor(monkeypatch, FakeYoutubeDL)
     monkeypatch.setattr(downloader, "update_podcast_metadata", fake_update_metadata)
     _stub_meta_cache(monkeypatch)
 
@@ -115,31 +129,21 @@ def test_youtube_playlist_entries_are_collected(monkeypatch):
     }
 
 
-def test_youtube_format_prefers_audio_then_lowest_muxed_and_never_video_only():
-    from yt_dlp import YoutubeDL
+def test_youtube_download_aborts_on_missing_fragments(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(downloader.shutil, "which", lambda _: "/bin/ffmpeg")
 
-    selector = YoutubeDL({"quiet": True}).build_format_selector(
-        "worstaudio/worst[acodec!=none]"
-    )
-    video = {"format_id": "video", "vcodec": "h264", "acodec": "none"}
-    muxed = {"format_id": "small-muxed", "vcodec": "h264", "acodec": "aac"}
-    audio = {"format_id": "audio-only", "vcodec": "none", "acodec": "aac"}
+    def extract(url, download, options):
+        captured.update(options)
+        return {}
 
-    def selected(formats):
-        return [
-            item["format_id"]
-            for item in selector(
-                {
-                    "formats": formats,
-                    "incomplete_formats": False,
-                    "has_merged_format": True,
-                }
-            )
-        ]
-
-    assert selected([video, muxed, audio]) == ["audio-only"]
-    assert selected([video, muxed]) == ["small-muxed"]
-    assert selected([video]) == []
+    monkeypatch.setattr(downloader, "_extract_youtube_info", extract)
+    downloader._run_youtube_download("https://youtu.be/abc123", tmp_path)
+    assert captured["skip_unavailable_fragments"] is False
+    assert captured["format"] == "worstaudio/worst[acodec!=none]"
+    assert captured["postprocessors"] == [
+        {"key": "FFmpegExtractAudio", "preferredcodec": "m4a"}
+    ]
 
 
 def test_youtube_episode_downloads_audio(monkeypatch, tmp_path):
@@ -172,7 +176,8 @@ def test_youtube_episode_downloads_audio(monkeypatch, tmp_path):
             # filepath 由 postprocessor 更新为转码后的路径
             return {"id": "abc123", "requested_downloads": [{"filepath": str(written)}]}
 
-    monkeypatch.setattr(downloader, "YoutubeDL", FakeYoutubeDL, raising=False)
+    _stub_extractor(monkeypatch, FakeYoutubeDL)
+    monkeypatch.setattr(downloader.shutil, "which", lambda _: "/bin/ffmpeg")
 
     file_name = asyncio.run(
         downloader._download_youtube_episode(
@@ -211,9 +216,10 @@ def test_youtube_episode_returns_name_when_file_already_exists(monkeypatch, tmp_
 
         def extract_info(self, url, download):
             existing.write_bytes(b"new")  # yt-dlp 覆盖同名文件，目录没有新增项
-            return {"id": "abc123", "requested_downloads": [{"filepath": str(existing)}]}
+            return {"id": "abc123", "filepath": str(existing)}
 
-    monkeypatch.setattr(downloader, "YoutubeDL", FakeYoutubeDL, raising=False)
+    _stub_extractor(monkeypatch, FakeYoutubeDL)
+    monkeypatch.setattr(downloader.shutil, "which", lambda _: "/bin/ffmpeg")
 
     file_name = asyncio.run(
         downloader._download_youtube_episode(
@@ -229,15 +235,7 @@ def test_youtube_episode_returns_name_when_file_already_exists(monkeypatch, tmp_
 
 
 def test_youtube_episode_requires_ffmpeg(monkeypatch, tmp_path):
-    class FakeYoutubeDL:
-        def __init__(self, options):
-            self.options = options
-
-        def __enter__(self):
-            raise AssertionError("yt-dlp should not run without ffmpeg")
-
     monkeypatch.setenv("PATH", "")
-    monkeypatch.setattr(downloader, "YoutubeDL", FakeYoutubeDL, raising=False)
 
     try:
         asyncio.run(
@@ -278,14 +276,17 @@ def test_youtube_private_videos_are_dropped(monkeypatch):
                     "title": "Channel",
                     "entries": [
                         {"id": "good", "url": "https://www.youtube.com/watch?v=good"},
-                        {"id": "private", "url": "https://www.youtube.com/watch?v=private"},
+                        {
+                            "id": "private",
+                            "url": "https://www.youtube.com/watch?v=private",
+                        },
                     ],
                 }
             if url.endswith("private"):
                 return {}  # ignoreerrors 下私享视频返回空
             return {"id": "good", "title": "Good video", "timestamp": 1_700_000_000}
 
-    monkeypatch.setattr(downloader, "YoutubeDL", FakeYoutubeDL, raising=False)
+    _stub_extractor(monkeypatch, FakeYoutubeDL)
     monkeypatch.setattr(downloader, "update_podcast_metadata", lambda *a: None)
     _stub_meta_cache(monkeypatch)
 
@@ -331,7 +332,7 @@ def test_youtube_cached_entries_skip_detail_fetch(monkeypatch):
             "published_at": "2020-01-01T00:00:00+00:00",
         }
     }
-    monkeypatch.setattr(downloader, "YoutubeDL", FakeYoutubeDL, raising=False)
+    _stub_extractor(monkeypatch, FakeYoutubeDL)
     monkeypatch.setattr(downloader, "update_podcast_metadata", lambda *a: None)
     monkeypatch.setattr(downloader, "get_cached_episode_meta", lambda ids: cached)
     monkeypatch.setattr(downloader, "save_episode_meta", saved.extend)
@@ -384,9 +385,14 @@ def _ordered_playlist_fake(dates):
 
 
 def test_page_size_takes_newest_end_of_newest_first_playlist(monkeypatch):
-    dates = [("n1", "20260803"), ("n2", "20260802"), ("o1", "20260101"), ("o2", "20251231")]
+    dates = [
+        ("n1", "20260803"),
+        ("n2", "20260802"),
+        ("o1", "20260101"),
+        ("o2", "20251231"),
+    ]
     fake = _ordered_playlist_fake(dates)
-    monkeypatch.setattr(downloader, "YoutubeDL", fake, raising=False)
+    _stub_extractor(monkeypatch, fake)
     monkeypatch.setattr(downloader, "update_podcast_metadata", lambda *a: None)
     _stub_meta_cache(monkeypatch)
 
@@ -397,9 +403,14 @@ def test_page_size_takes_newest_end_of_newest_first_playlist(monkeypatch):
 
 def test_page_size_takes_newest_end_of_oldest_first_playlist(monkeypatch):
     """播放列表旧到新时从尾部取，由 sort_order: asc 指明（实测 sqxx 就是这样）。"""
-    dates = [("o2", "20251231"), ("o1", "20260101"), ("n2", "20260802"), ("n1", "20260803")]
+    dates = [
+        ("o2", "20251231"),
+        ("o1", "20260101"),
+        ("n2", "20260802"),
+        ("n1", "20260803"),
+    ]
     fake = _ordered_playlist_fake(dates)
-    monkeypatch.setattr(downloader, "YoutubeDL", fake, raising=False)
+    _stub_extractor(monkeypatch, fake)
     monkeypatch.setattr(downloader, "update_podcast_metadata", lambda *a: None)
     _stub_meta_cache(monkeypatch)
 
@@ -415,7 +426,7 @@ def test_page_size_is_raised_to_cover_keep_latest(monkeypatch):
     """page_size 小于 keep_latest 时要抬高，否则永远凑不够要保留的集数。"""
     dates = [(f"v{i}", f"2026080{9 - i}") for i in range(5)]
     fake = _ordered_playlist_fake(dates)
-    monkeypatch.setattr(downloader, "YoutubeDL", fake, raising=False)
+    _stub_extractor(monkeypatch, fake)
     monkeypatch.setattr(downloader, "update_podcast_metadata", lambda *a: None)
     _stub_meta_cache(monkeypatch)
 

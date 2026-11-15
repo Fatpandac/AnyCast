@@ -10,14 +10,13 @@ import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 from bilix.sites.bilibili import api
 from bilix.sites.bilibili.downloader import DownloaderBilibili
-from yt_dlp import YoutubeDL
 
+from src import ytdlp
 from src.config import Podcast, get_config
 from src.database import (
     cleanup_old_episodes,
@@ -211,9 +210,10 @@ def _isolated_cookiefile(options: dict):
 
 
 def _extract_youtube_info(url: str, download: bool, options: dict) -> dict:
-    # yt-dlp 的参数和结果来自动态配置；调用方按字典使用其运行时结构。
-    with _isolated_cookiefile(options) as opts, YoutubeDL(cast(Any, opts)) as ydl:
-        return cast(dict, ydl.extract_info(url, download=download) or {})
+    with _isolated_cookiefile(options) as opts:
+        return ytdlp.extract_info(
+            url, download, opts, get_config().get("youtube", {}), _cancel_downloads
+        )
 
 
 def _detail_semaphore() -> asyncio.Semaphore:
@@ -309,7 +309,6 @@ async def _collect_youtube_episodes(podcast: Podcast) -> list[dict]:
         **_youtube_base_options(),
     }
     base_options = _merge_yt_dlp_options(base_options, podcast.get("yt_dlp_options"))
-    base_options["logger"] = logging.getLogger("yt_dlp")
 
     # 第一步：扁平列表，只拿 id / 标题 / 缩略图，几秒钟就能返回
     info = await asyncio.to_thread(
@@ -534,19 +533,6 @@ async def __download_episode(episode: dict[str, str], target_dir: Path) -> str |
         return await __download_one(downloader, episode, target_dir)
 
 
-def _yt_progress_hook(d: dict) -> None:
-    status = d.get("status")
-    if status == "downloading":
-        filename = Path(d.get("filename", "")).name
-        downloaded = d.get("_downloaded_bytes_str", "?")
-        total = d.get("_total_bytes_str") or d.get("_total_bytes_estimate_str", "?")
-        speed = d.get("_speed_str", "?")
-        eta = d.get("_eta_str", "?")
-        log.info(f"下载中: {filename} {downloaded}/{total} 速度:{speed} 剩余:{eta}")
-    elif status == "finished":
-        log.info(f"下载完成: {Path(d.get('filename', '')).name}")
-
-
 def _downloaded_file_name(info: dict) -> str | None:
     """从 yt-dlp 的返回信息里取最终文件名。
 
@@ -554,6 +540,8 @@ def _downloaded_file_name(info: dict) -> str | None:
     .mp4。比对目录前后差集的老做法在目标文件已存在时会得到空集，从而把一次
     成功的下载误判为失败，进而永不入库、每轮重下。
     """
+    if info.get("filepath"):
+        return Path(info["filepath"]).name
     for entry in info.get("requested_downloads") or []:
         path = entry.get("filepath") or entry.get("_filename") or entry.get("filename")
         if path:
@@ -580,14 +568,11 @@ def _run_youtube_download(
         # 的 64 分钟节目）。失败不入库，交给下一次定时任务重试。
         "skip_unavailable_fragments": False,
         "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "m4a"}],
-        "progress_hooks": [_yt_progress_hook],
         **_youtube_base_options(),
     }
     options = _merge_yt_dlp_options(options, yt_dlp_options)
-    options["logger"] = logging.getLogger("yt_dlp")
 
-    # yt-dlp 没给出 requested_downloads 时（例如目标文件已存在被直接跳过），
-    # 与 bilix 那边走同一套兜底，避免把成功的下载记成失败。
+    # 外部命令未返回最终文件路径时，与 bilix 使用同一套文件变更兜底。
     before = _audio_snapshot(target_dir)
     info = _extract_youtube_info(url, True, options)
     return _downloaded_file_name(info) or _touched_audio_file(target_dir, before)

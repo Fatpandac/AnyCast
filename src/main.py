@@ -49,7 +49,7 @@ from src.config import (
     update_admin_settings,
     update_podcast,
 )
-from src import downloader, passkeys
+from src import downloader, passkeys, ytdlp
 from src.updates import UpdateError, UpdateService, write_json
 from src.database import (
     count_episodes_by_podcast,
@@ -402,6 +402,12 @@ async def admin_install_update(
         if not update_service.requested:
             downloader.resume_after_update()
         raise
+
+
+@app.get("/api/admin/ytdlp")
+async def admin_ytdlp_status(response: Response, _auth: None = Depends(require_admin)):
+    response.headers["Cache-Control"] = "no-store"
+    return {"update_error": ytdlp.get_update_error()}
 
 
 @app.get("/api/admin/settings")

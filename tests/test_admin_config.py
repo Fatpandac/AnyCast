@@ -2,6 +2,7 @@
 from pathlib import Path
 from typing import cast
 
+import pytest
 import yaml
 
 from src import config, jobs
@@ -71,6 +72,21 @@ def test_update_podcast_preserves_options_and_other_config(monkeypatch, tmp_path
     assert saved["server"] == {"port": 9000}
     assert saved["podcasts"][0]["url"] == "https://example.com/updated"
     assert saved["podcasts"][0]["yt_dlp_options"] == {"cookiefile": "/tmp/cookies.txt"}
+
+
+@pytest.mark.parametrize("auto_update", [True, False])
+def test_cookie_settings_preserve_external_ytdlp_options(
+    monkeypatch, tmp_path, auto_update
+):
+    config_path = tmp_path / "config.yaml"
+    youtube = {"executable": "/opt/tools/yt-dlp", "auto_update": auto_update}
+    config_path.write_text(yaml.safe_dump({"youtube": youtube, "podcasts": []}))
+    monkeypatch.setattr(config, "__get_config_file", lambda: str(config_path))
+
+    config.update_admin_settings({}, {"cookies_file": "/tmp/cookies.txt"})
+
+    saved = yaml.safe_load(config_path.read_text())
+    assert saved["youtube"] == {**youtube, "cookies_file": "/tmp/cookies.txt"}
 
 
 def test_add_and_remove_podcast_preserves_other_config(monkeypatch, tmp_path: Path):

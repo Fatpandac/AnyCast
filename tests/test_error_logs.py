@@ -181,22 +181,12 @@ def test_youtube_playlist_error_is_captured_even_when_extraction_returns_empty(
 ):
     monkeypatch.setattr(main, "RUNTIME_LOG_PATH", tmp_path / "runtime.log")
 
-    class FakeYoutubeDL:
-        def __init__(self, options):
-            self.options = options
+    def extract_info(_url, download, options, settings, stop):
+        assert download is False
+        logging.getLogger("src.ytdlp").error("No route to host")
+        return {}
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def extract_info(self, _url, download):
-            assert download is False
-            self.options["logger"].error("No route to host")
-            return {}
-
-    monkeypatch.setattr(downloader, "YoutubeDL", FakeYoutubeDL)
+    monkeypatch.setattr(downloader.ytdlp, "extract_info", extract_info)
     monkeypatch.setattr(downloader, "_youtube_base_options", lambda: {})
     monkeypatch.setattr(downloader, "get_cached_episode_meta", lambda _ids: {})
     monkeypatch.setattr(downloader, "save_episode_meta", lambda _rows: None)

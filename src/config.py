@@ -17,7 +17,7 @@ class Podcast(TypedDict):
     sort_by: Literal["date", "title"]
     sort_order: Literal["asc", "desc"]
     page_size: int  # 每次从播放列表最新的一端取多少条参与筛选
-    yt_dlp_options: dict  # 透传给 yt-dlp 的额外参数，覆盖内置默认值
+    yt_dlp_options: dict  # 常用 Python API 风格参数，由适配器转换为外部命令参数
 
 
 class ServerConfig(TypedDict, total=False):
@@ -26,6 +26,8 @@ class ServerConfig(TypedDict, total=False):
 
 
 class YouTubeConfig(TypedDict, total=False):
+    executable: str
+    auto_update: bool
     cookies_file: str
     cookies_from_browser: str
 
