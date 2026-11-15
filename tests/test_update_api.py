@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import cast
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -110,6 +113,46 @@ def test_download_busy_guard_is_atomic_and_rejects_install(service, monkeypatch)
     assert "下载" in response.json()["detail"]
     assert not service.requested
     assert not downloader.downloads_paused()
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_update_queries_do_not_wait_for_download_workers(service, monkeypatch, method):
+    instance, target = service
+    monkeypatch.setattr(downloader, "_active_downloads", 1)
+
+    async def verify():
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+        occupied = asyncio.Event()
+        release = threading.Event()
+
+        def download():
+            loop.call_soon_threadsafe(occupied.set)
+            release.wait()
+
+        downloading = loop.run_in_executor(None, download)
+        try:
+            await asyncio.wait_for(occupied.wait(), timeout=2)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=main.app),
+                base_url="http://testserver",
+            ) as client:
+                path = "/api/admin/updates" + ("/check" if method == "POST" else "")
+                response = await asyncio.wait_for(
+                    client.request(method, path, auth=("admin", "secret")), timeout=2
+                )
+            assert response.status_code == 200
+            status = response.json()
+            assert status["current_sha"] == instance.running_sha
+            assert status["can_update"] is False
+            assert "下载" in status["reason"]
+            if method == "POST":
+                assert status["latest_sha"] == target
+        finally:
+            release.set()
+            await downloading
+
+    asyncio.run(verify())
 
 
 def test_gate_tracks_scans_and_prevents_new_downloads(monkeypatch):

@@ -21,6 +21,7 @@ from fastapi import Request
 from fastapi.responses import FileResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 from feedgen.feed import FeedGenerator
 from src.admin import (
     CookieFilePayload,
@@ -87,7 +88,8 @@ async def _check_updates_periodically() -> None:
             await asyncio.sleep(0.5)
             continue
         try:
-            await asyncio.to_thread(update_service.check)
+            # 与耗时下载使用的 asyncio 默认线程池隔离。
+            await run_in_threadpool(update_service.check)
         except UpdateError as exc:
             log.warning("检查应用更新失败：%s", exc)
         await asyncio.sleep(3600)
@@ -365,7 +367,7 @@ def _update_status(status: dict) -> dict:
 async def admin_update_status(response: Response, _auth: None = Depends(require_admin)):
     response.headers["Cache-Control"] = "no-store"
     try:
-        return _update_status(await asyncio.to_thread(update_service.status))
+        return _update_status(await run_in_threadpool(update_service.status))
     except UpdateError as exc:
         raise HTTPException(503, str(exc)) from exc
 
@@ -377,7 +379,7 @@ async def admin_check_update(
     check_admin_request_origin(request, allow_during_update=True)
     response.headers["Cache-Control"] = "no-store"
     try:
-        return _update_status(await asyncio.to_thread(update_service.check))
+        return _update_status(await run_in_threadpool(update_service.check))
     except UpdateError as exc:
         raise HTTPException(503, str(exc)) from exc
 
