@@ -4,6 +4,7 @@ import { ArrowLeft, LoaderCircle, Save } from "lucide-react"
 import { changeAdminPassword, getCookieFile, getRuntimeLog, getSettings, saveCookieFile, savePasskeyOrigin, saveSettings, type Settings } from "@/api"
 import { registerPasskey } from "@/passkeys"
 import { ApplicationUpdates } from "@/Updates"
+import { YtdlpNotice } from "@/YtdlpNotice"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
@@ -247,6 +248,7 @@ export function SettingsPage({ goBack }: { goBack: () => void }) {
         </div>
       </header>
       <main className="mx-auto grid grid-cols-1 max-w-3xl gap-5 px-4 py-6 sm:px-6">
+        <YtdlpNotice />
         {error && <Alert className="border-destructive/40 bg-destructive/5 text-destructive" role="alert"><AlertTitle>操作失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
         {saved && <Alert role="status"><AlertDescription>设置已保存。修改监听地址或端口后，请重启服务；YouTube Cookie 设置将在下次下载时生效。</AlertDescription></Alert>}
         {!settings && !error && <div className="flex justify-center py-16 text-muted-foreground"><LoaderCircle className="size-6 animate-spin" /></div>}

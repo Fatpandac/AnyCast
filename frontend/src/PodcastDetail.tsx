@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { ArrowLeft, CalendarDays, Download, ExternalLink, FileAudio, LoaderCircle } from "lucide-react"
 
 import { getPodcast, type Episode, type Podcast } from "@/api"
+import { YtdlpNotice } from "@/YtdlpNotice"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -35,6 +36,7 @@ export function PodcastDetail({ name, goBack }: { name: string; goBack: () => vo
       </header>
 
       <main className="mx-auto grid max-w-6xl gap-4 px-4 py-6 sm:px-6">
+        <YtdlpNotice />
         {error ? (
           <Alert className="border-destructive/40 bg-destructive/5 text-destructive"><AlertTitle>加载失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>
         ) : !podcast ? (

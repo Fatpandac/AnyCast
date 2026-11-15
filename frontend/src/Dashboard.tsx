@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react"
 import { AlertTriangle, ChevronDown, ExternalLink, LoaderCircle, Pencil, Plus, Radio, RotateCw, Settings2, Trash2 } from "lucide-react"
 
 import { createPodcast, deletePodcast, listPodcasts, runPodcastUpdate, updatePodcast, type Podcast, type PodcastInput } from "@/api"
+import { YtdlpNotice } from "@/YtdlpNotice"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -153,6 +154,7 @@ export function Dashboard({ openPodcast, openSettings }: { openPodcast: (name: s
       </header>
 
       <main className="mx-auto grid max-w-6xl gap-6 px-4 py-6 sm:px-6">
+        <YtdlpNotice />
         {usesDefaultPassword && (
           <Alert className="border-amber-300 bg-amber-50 text-amber-950">
             <AlertTriangle className="mb-2 size-4" />

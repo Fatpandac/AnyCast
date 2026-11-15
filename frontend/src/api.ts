@@ -51,6 +51,10 @@ export type Settings = {
   admin?: { passkey_origin: string; passkey_count: number }
 }
 
+export function getYtdlpStatus() {
+  return request<{ update_error: string | null }>("/api/admin/ytdlp", { cache: "no-store", signal: AbortSignal.timeout(5000) })
+}
+
 export function getSettings() {
   return request<Settings>("/api/admin/settings")
 }

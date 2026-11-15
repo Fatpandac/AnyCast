@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { App } from "./App"
 import { describeSchedule, parseScheduleCron } from "./schedule"
 
+vi.mock("./YtdlpNotice", () => ({ YtdlpNotice: () => null }))
+
 const podcast = {
   name: "weekly",
   url: "https://www.youtube.com/playlist?list=PL123",
